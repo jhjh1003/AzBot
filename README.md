@@ -5,6 +5,7 @@
 - 스택: **C# / .NET 10 (LTS) / Discord.Net 3.20.1**
 - 명령어: `/ping`, `/riotcheck`, `/atoz 멤버등록`, `/티어픽`, `/승률순위`
 - 버전/변경 이력: [CHANGELOG.md](CHANGELOG.md) — 기능을 추가하거나 기존 동작을 바꾸면 이 파일도 같이 갱신해 주세요.
+- **코드를 안 읽고 전체 구조부터 이해하고 싶다면**: [ARCHITECTURE.md](ARCHITECTURE.md) — 폴더/파일별 역할과 동작 흐름을 비유와 다이어그램으로 정리한 문서.
 
 ## 1. 필요한 값 준비
 
