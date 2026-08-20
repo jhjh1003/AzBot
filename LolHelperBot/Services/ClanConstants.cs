@@ -18,8 +18,14 @@ public static class ClanConstants
     /// <summary>Riot 자유 랭크(Flex) 큐 ID. 우리 클랜 통계는 전부 이 큐만 봅니다.</summary>
     public const int FlexQueueId = 440;
 
+    /// <summary>.rofl로 등록한 내전을 자유 랭크와 분리하는 내부 큐 ID.</summary>
+    public const int InternalGameQueueId = 0;
+
     /// <summary>승률/모스트/워스트 계열 통계에서 후보로 삼는 최소 판수 (5판 이하는 표본 부족으로 제외).</summary>
     public const int MinSampleSize = 6;
+
+    /// <summary>메타픽에 붙는 AZ 자랭 승률을 신뢰 표본으로 판정하는 최소 판수.</summary>
+    public const int MetaPickMinSampleSize = 3;
 
     /// <summary>Riot API 요청 한도를 지키기 위한 호출 간 최소 대기 시간.</summary>
     public static readonly TimeSpan RiotApiDelay = TimeSpan.FromMilliseconds(1200);

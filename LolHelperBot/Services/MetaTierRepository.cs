@@ -50,6 +50,8 @@ public class MetaTierRepository
                             entry.Champion!,
                             entry.Tier ?? "?",
                             entry.WinRate,
+                            entry.PickRate,
+                            entry.BanRate,
                             entry.Counters ?? []))
                         .ToList(),
                     StringComparer.OrdinalIgnoreCase);
@@ -93,12 +95,24 @@ public class MetaTierRepository
         [JsonPropertyName("winRate")]
         public double WinRate { get; set; }
 
+        [JsonPropertyName("pickRate")]
+        public double PickRate { get; set; }
+
+        [JsonPropertyName("banRate")]
+        public double BanRate { get; set; }
+
         [JsonPropertyName("counters")]
         public List<string>? Counters { get; set; }
     }
 }
 
-public record MetaTierEntry(string Champion, string Tier, double WinRate, IReadOnlyList<string> Counters);
+public record MetaTierEntry(
+    string Champion,
+    string Tier,
+    double WinRate,
+    double PickRate,
+    double BanRate,
+    IReadOnlyList<string> Counters);
 
 public record MetaTierSnapshot(
     string? UpdatedAt,

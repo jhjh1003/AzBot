@@ -8,7 +8,7 @@
     <RootNamespace>LolHelperBot</RootNamespace>
     <UserSecretsId>lol-helper-bot-dev-secrets</UserSecretsId>
     <!-- CHANGELOG.md와 버전을 맞춥니다. 기능을 추가/변경하면 CHANGELOG.md에 항목을 남기고 이 값도 같이 올려주세요. -->
-    <Version>0.2.0</Version>
+    <Version>0.5.0</Version>
     <!-- 하네스 지침 R1: 토큰/키는 코드나 appsettings.json에 절대 하드코딩하지 않는다.
          dotnet user-secrets 또는 환경변수(Discord__Token, Riot__ApiKey 등)로만 주입한다. README.md 참고. -->
   </PropertyGroup>

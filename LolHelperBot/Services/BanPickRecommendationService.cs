@@ -29,7 +29,7 @@ public class BanPickRecommendationService
 
     /// <summary>
     /// 밴픽 추천을 계산합니다. 저장된 자유 랭크 전적이 아예 없으면 null을 반환합니다
-    /// (호출부가 "먼저 /전적수집을 실행하라"는 안내 메시지를 보여줄 수 있도록).
+    /// (호출부가 "먼저 /atoz 전적수집을 실행하라"는 안내 메시지를 보여줄 수 있도록).
     /// </summary>
     public async Task<BanPickRecommendation?> BuildAsync(ulong guildId, string? positionFilter)
     {
@@ -61,9 +61,37 @@ public class BanPickRecommendationService
         MetaTierSnapshot? metaSnapshot)
     {
         var lineTierRows = tierRows.Where(row => row.TeamPosition == position).ToList();
+        var metaEntries = metaSnapshot?.GetForPosition(position) ?? [];
+        var selectedMetaEntries = metaEntries
+            .Where(entry => IsTopMetaTier(entry.Tier))
+            .OrderBy(entry => GetTierRank(entry.Tier))
+            .ThenByDescending(GetMetaPowerScore)
+            .Take(PerLineTakeCount)
+            .ToList();
+        var metaPairs = selectedMetaEntries
+            .Select(entry => (position, entry.Champion))
+            .ToList();
+        var metaPlayersByPair = await _matchRepository.GetChampionPlayersBatchAsync(
+            guildId, FlexQueueId, metaPairs);
+        var metaPicks = selectedMetaEntries
+            .Select(entry =>
+            {
+                var players = metaPlayersByPair.GetValueOrDefault((position, entry.Champion), []);
+                return new BanPickMetaCandidate(
+                    entry.Champion,
+                    entry.Tier,
+                    entry.WinRate,
+                    entry.PickRate,
+                    entry.BanRate,
+                    players.Sum(player => player.Games),
+                    players.Sum(player => player.Wins),
+                    players);
+            })
+            .ToList();
+
         if (lineTierRows.Count == 0)
         {
-            return new BanPickLineResult(position, HasData: false, [], []);
+            return new BanPickLineResult(position, HasData: false, [], metaPicks, []);
         }
 
         var sampledLineTierRows = lineTierRows.Where(row => row.Games >= MinSampleSize).ToList();
@@ -73,16 +101,23 @@ public class BanPickRecommendationService
         }
 
         // --- 픽 추천: 클랜 데이터 기준 라인 베스트픽 Top3 (+ 메타 스냅샷에 카운터 정보가 있으면 같이) ---
+        var metaByChampion = metaEntries.ToDictionary(entry => entry.Champion, StringComparer.OrdinalIgnoreCase);
         var picks = sampledLineTierRows
             .Where(row => row.Wins * 1.0 / row.Games >= 0.5)
             .OrderByDescending(row => row.Wins * 1.0 / row.Games)
             .ThenByDescending(row => row.Games)
             .Take(PerLineTakeCount)
-            .Select(row => new BanPickPickCandidate(
-                row.ChampionName,
-                row.Games,
-                row.Wins,
-                metaSnapshot?.GetCounters(row.ChampionName) ?? []))
+            .Select(row =>
+            {
+                metaByChampion.TryGetValue(row.ChampionName, out var metaEntry);
+                return new BanPickPickCandidate(
+                    row.ChampionName,
+                    row.Games,
+                    row.Wins,
+                    metaEntry?.Counters ?? [],
+                    metaEntry?.Tier,
+                    metaEntry is not null && IsTopMetaTier(metaEntry.Tier));
+            })
             .ToList();
 
         // --- 밴 추천: 아래 3가지 기준에서 각각 1개씩, 중복 없이 ---
@@ -133,11 +168,19 @@ public class BanPickRecommendationService
                 matchupCandidate.ChampionName, matchupCandidate.Games, matchupCandidate.Wins, ourTopPicks));
         }
 
-        return new BanPickLineResult(position, HasData: true, picks, bans);
+        return new BanPickLineResult(position, HasData: true, picks, metaPicks, bans);
     }
 
-    // 메타 티어 후보 정렬용 — "S" > "A" > ... 순으로 좋은 티어가 먼저 오게 순위를 매깁니다.
-    // "S+"/"A-"처럼 접미사가 붙어도 첫 글자만 보고 판단합니다.
+    private static bool IsTopMetaTier(string tier) =>
+        tier.Equals("OP", StringComparison.OrdinalIgnoreCase) ||
+        tier.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+        tier.StartsWith("S", StringComparison.OrdinalIgnoreCase);
+
+    // 승률 50% 초과분을 두 배로 반영하고 픽률+밴률을 더해, 성능과 실제 밴픽 존재감을 함께 봅니다.
+    private static double GetMetaPowerScore(MetaTierEntry entry) =>
+        ((entry.WinRate - 50.0) * 2.0) + entry.PickRate + entry.BanRate;
+
+    // op.gg 숫자 티어(1 > 2 > ...)와 예전 문자 티어(S > A > ...)를 모두 지원합니다.
     private static int GetTierRank(string tier)
     {
         if (string.IsNullOrEmpty(tier))
@@ -147,12 +190,18 @@ public class BanPickRecommendationService
 
         return char.ToUpperInvariant(tier[0]) switch
         {
+            'O' => 0,
+            '1' => 1,
+            '2' => 2,
+            '3' => 3,
+            '4' => 4,
+            '5' => 5,
             'S' => 0,
             'A' => 1,
             'B' => 2,
             'C' => 3,
             'D' => 4,
-            _ => 9,
+            _ => 99,
         };
     }
 }
@@ -168,9 +217,26 @@ public record BanPickLineResult(
     string Position,
     bool HasData,
     IReadOnlyList<BanPickPickCandidate> Picks,
+    IReadOnlyList<BanPickMetaCandidate> MetaPicks,
     IReadOnlyList<BanPickBanCandidate> Bans);
 
-public record BanPickPickCandidate(string ChampionName, int Games, int Wins, IReadOnlyList<string> MetaCounters);
+public record BanPickPickCandidate(
+    string ChampionName,
+    int Games,
+    int Wins,
+    IReadOnlyList<string> MetaCounters,
+    string? MetaTier,
+    bool IsHoneyPick);
+
+public record BanPickMetaCandidate(
+    string ChampionName,
+    string Tier,
+    double WinRate,
+    double PickRate,
+    double BanRate,
+    int AzGames,
+    int AzWins,
+    IReadOnlyList<ChampionPlayerRow> Players);
 
 public enum BanReasonKind
 {

@@ -43,7 +43,7 @@ op.gg 티어 리스트 페이지에서 **라인 하나씩 선택**해서, 챔피
 파일명: `tier_TOP.png`, `tier_JUNGLE.png`, `tier_MIDDLE.png`, `tier_BOTTOM.png`, `tier_UTILITY.png`
 (원딜=BOTTOM, 서폿=UTILITY 입니다.)
 
-→ `MetaTierSnapshot.json`의 `positions.{라인}` 배열(`champion`/`tier`/`winRate`)을 채우는 데 씀.
+→ `MetaTierSnapshot.json`의 `positions.{라인}` 배열(`champion`/`tier`/`winRate`/`pickRate`/`banRate`)을 채우는 데 씀.
 
 ### 2) 챔피언별 카운터 탭 (필요한 만큼)
 

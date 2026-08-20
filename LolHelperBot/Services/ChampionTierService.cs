@@ -25,7 +25,7 @@ public class ChampionTierService
 
     /// <summary>
     /// 라인별 챔피언 티어 + 라인 무관 전체 워스트 챔피언을 계산합니다. 저장된 전적이 아예 없으면
-    /// null을 반환합니다(호출부가 "먼저 /전적수집을 실행하라"는 안내 메시지를 보여줄 수 있도록).
+    /// null을 반환합니다(호출부가 "먼저 /atoz 전적수집을 실행하라"는 안내 메시지를 보여줄 수 있도록).
     /// </summary>
     public async Task<ChampionTierResult?> BuildAsync(ulong guildId, string? positionFilter)
     {

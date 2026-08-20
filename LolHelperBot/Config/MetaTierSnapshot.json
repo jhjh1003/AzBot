@@ -1,11 +1,66 @@
 {
-  "updatedAt": null,
-  "source": "op.gg 라인별 티어 리스트 (수동 스냅샷) — 채워넣으면 /밴픽추천에 반영됩니다. 사용법은 Config/MetaTierSnapshot.README.md 참고.",
+  "updatedAt": "2026-08-20",
+  "source": "op.gg 라인별 티어 리스트 캡처 (수동 스냅샷, 2026-08-20)",
   "positions": {
-    "TOP": [],
-    "JUNGLE": [],
-    "MIDDLE": [],
-    "BOTTOM": [],
-    "UTILITY": []
+    "TOP": [
+      { "champion": "Nasus", "tier": "OP", "winRate": 52.43, "pickRate": 9.98, "banRate": 18.64, "counters": [] },
+      { "champion": "Gangplank", "tier": "1", "winRate": 51.13, "pickRate": 7.43, "banRate": 23.04, "counters": [] },
+      { "champion": "Malphite", "tier": "1", "winRate": 52.34, "pickRate": 5.96, "banRate": 12.80, "counters": [] },
+      { "champion": "Jax", "tier": "1", "winRate": 50.09, "pickRate": 6.57, "banRate": 12.35, "counters": [] },
+      { "champion": "Camille", "tier": "1", "winRate": 51.27, "pickRate": 2.86, "banRate": 30.83, "counters": [] },
+      { "champion": "Poppy", "tier": "2", "winRate": 53.45, "pickRate": 1.14, "banRate": 18.04, "counters": [] },
+      { "champion": "Yone", "tier": "2", "winRate": 49.57, "pickRate": 10.29, "banRate": 13.08, "counters": [] },
+      { "champion": "Renekton", "tier": "2", "winRate": 50.60, "pickRate": 5.55, "banRate": 4.41, "counters": [] },
+      { "champion": "Olaf", "tier": "2", "winRate": 50.42, "pickRate": 4.52, "banRate": 5.76, "counters": [] },
+      { "champion": "Darius", "tier": "2", "winRate": 50.22, "pickRate": 4.11, "banRate": 7.02, "counters": [] }
+    ],
+    "JUNGLE": [
+      { "champion": "LeeSin", "tier": "OP", "winRate": 50.89, "pickRate": 26.20, "banRate": 56.85, "counters": [] },
+      { "champion": "Nidalee", "tier": "1", "winRate": 52.53, "pickRate": 5.73, "banRate": 6.09, "counters": [] },
+      { "champion": "Vi", "tier": "1", "winRate": 50.75, "pickRate": 10.76, "banRate": 6.76, "counters": [] },
+      { "champion": "Graves", "tier": "1", "winRate": 49.18, "pickRate": 15.52, "banRate": 14.63, "counters": [] },
+      { "champion": "Shaco", "tier": "1", "winRate": 50.19, "pickRate": 9.80, "banRate": 25.52, "counters": [] },
+      { "champion": "Naafiri", "tier": "1", "winRate": 49.91, "pickRate": 6.76, "banRate": 26.33, "counters": [] },
+      { "champion": "MonkeyKing", "tier": "2", "winRate": 51.15, "pickRate": 6.35, "banRate": 2.49, "counters": [] },
+      { "champion": "Zyra", "tier": "2", "winRate": 52.81, "pickRate": 1.55, "banRate": 1.43, "counters": [] },
+      { "champion": "Nocturne", "tier": "2", "winRate": 49.67, "pickRate": 5.43, "banRate": 10.38, "counters": [] },
+      { "champion": "Ivern", "tier": "2", "winRate": 53.60, "pickRate": 0.80, "banRate": 0.24, "counters": [] }
+    ],
+    "MIDDLE": [
+      { "champion": "Viktor", "tier": "OP", "winRate": 50.17, "pickRate": 12.83, "banRate": 35.67, "counters": [] },
+      { "champion": "TwistedFate", "tier": "OP", "winRate": 52.67, "pickRate": 9.65, "banRate": 4.43, "counters": [] },
+      { "champion": "Syndra", "tier": "1", "winRate": 51.32, "pickRate": 9.87, "banRate": 13.67, "counters": [] },
+      { "champion": "Zed", "tier": "1", "winRate": 51.16, "pickRate": 7.65, "banRate": 22.96, "counters": [] },
+      { "champion": "Lux", "tier": "2", "winRate": 50.00, "pickRate": 6.03, "banRate": 45.56, "counters": [] },
+      { "champion": "Katarina", "tier": "2", "winRate": 52.52, "pickRate": 4.79, "banRate": 3.98, "counters": [] },
+      { "champion": "Ahri", "tier": "2", "winRate": 51.39, "pickRate": 8.73, "banRate": 1.43, "counters": [] },
+      { "champion": "Xerath", "tier": "2", "winRate": 51.15, "pickRate": 4.05, "banRate": 42.22, "counters": [] },
+      { "champion": "Vex", "tier": "2", "winRate": 53.03, "pickRate": 2.98, "banRate": 3.23, "counters": [] },
+      { "champion": "Leblanc", "tier": "2", "winRate": 49.99, "pickRate": 4.73, "banRate": 27.24, "counters": [] }
+    ],
+    "BOTTOM": [
+      { "champion": "Kaisa", "tier": "1", "winRate": 49.91, "pickRate": 35.66, "banRate": 14.33, "counters": [] },
+      { "champion": "Jinx", "tier": "1", "winRate": 52.57, "pickRate": 9.69, "banRate": 2.28, "counters": [] },
+      { "champion": "Tristana", "tier": "2", "winRate": 51.67, "pickRate": 5.64, "banRate": 3.35, "counters": [] },
+      { "champion": "Viktor", "tier": "2", "winRate": 51.58, "pickRate": 3.85, "banRate": 35.67, "counters": [] },
+      { "champion": "Swain", "tier": "2", "winRate": 54.57, "pickRate": 1.08, "banRate": 1.44, "counters": [] },
+      { "champion": "Yunara", "tier": "2", "winRate": 50.61, "pickRate": 9.66, "banRate": 1.69, "counters": [] },
+      { "champion": "Zeri", "tier": "2", "winRate": 51.82, "pickRate": 5.09, "banRate": 0.51, "counters": [] },
+      { "champion": "Xayah", "tier": "2", "winRate": 51.84, "pickRate": 6.17, "banRate": 1.48, "counters": [] },
+      { "champion": "Caitlyn", "tier": "2", "winRate": 49.51, "pickRate": 14.26, "banRate": 12.84, "counters": [] },
+      { "champion": "Lucian", "tier": "2", "winRate": 49.88, "pickRate": 12.55, "banRate": 6.56, "counters": [] }
+    ],
+    "UTILITY": [
+      { "champion": "Thresh", "tier": "OP", "winRate": 52.72, "pickRate": 12.71, "banRate": 10.16, "counters": [] },
+      { "champion": "Nautilus", "tier": "1", "winRate": 50.51, "pickRate": 14.09, "banRate": 16.26, "counters": [] },
+      { "champion": "Blitzcrank", "tier": "1", "winRate": 51.32, "pickRate": 9.37, "banRate": 19.65, "counters": [] },
+      { "champion": "Leona", "tier": "1", "winRate": 52.26, "pickRate": 8.22, "banRate": 7.21, "counters": [] },
+      { "champion": "Poppy", "tier": "1", "winRate": 52.53, "pickRate": 4.32, "banRate": 18.04, "counters": [] },
+      { "champion": "Lulu", "tier": "1", "winRate": 50.72, "pickRate": 11.35, "banRate": 6.18, "counters": [] },
+      { "champion": "Rell", "tier": "2", "winRate": 53.01, "pickRate": 4.32, "banRate": 1.16, "counters": [] },
+      { "champion": "Braum", "tier": "2", "winRate": 52.42, "pickRate": 4.38, "banRate": 3.86, "counters": [] },
+      { "champion": "Bard", "tier": "2", "winRate": 50.35, "pickRate": 7.60, "banRate": 3.92, "counters": [] },
+      { "champion": "Alistar", "tier": "2", "winRate": 52.00, "pickRate": 5.32, "banRate": 1.69, "counters": [] }
+    ]
   }
 }

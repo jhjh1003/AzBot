@@ -96,8 +96,14 @@ public static class BanPickQueryExperiment
             }
 
             Console.WriteLine("  픽 Top3: " + string.Join(", ", line.Picks.Select(p =>
-                $"{p.ChampionName}({p.Games}판 {Math.Round(p.Wins * 100.0 / p.Games)}%" +
+                $"{(p.IsHoneyPick ? "🐝" : "")}{p.ChampionName}({p.Games}판 {Math.Round(p.Wins * 100.0 / p.Games)}%" +
                 (p.MetaCounters.Count > 0 ? $", 카운터:{string.Join("/", p.MetaCounters)}" : "") + ")")));
+
+            Console.WriteLine("  메타픽 Top3: " + (line.MetaPicks.Count > 0
+                ? string.Join(", ", line.MetaPicks.Select(p =>
+                    $"{p.ChampionName}({p.Tier}, 승{p.WinRate:0.##}%/픽{p.PickRate:0.##}%/밴{p.BanRate:0.##}%, " +
+                    $"AZ {p.AzGames}판 {p.AzWins}승, 플레이어 {p.Players.Count}명)"))
+                : "없음"));
 
             foreach (var ban in line.Bans)
             {

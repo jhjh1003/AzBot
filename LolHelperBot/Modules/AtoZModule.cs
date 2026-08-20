@@ -10,8 +10,7 @@ using static LolHelperBot.Services.RiotIdParser;
 namespace LolHelperBot.Modules;
 
 [Group("atoz", "AtoZ 멤버를 관리합니다.")]
-[DefaultMemberPermissions(GuildPermission.ManageGuild)]
-public class AtoZModule : InteractionModuleBase<SocketInteractionContext>
+public partial class AtoZModule : InteractionModuleBase<SocketInteractionContext>
 {
     private readonly RiotApiClient _riotApiClient;
     private readonly MemberRepository _memberRepository;
@@ -25,6 +24,7 @@ public class AtoZModule : InteractionModuleBase<SocketInteractionContext>
     }
 
     [SlashCommand("멤버등록", "Discord 사용자와 Riot 계정을 연결해 AtoZ 멤버로 등록합니다.")]
+    [DefaultMemberPermissions(GuildPermission.ManageGuild)]
     public async Task RegisterMemberAsync(
         [Summary("롤아이디", "게임이름#태그 형식의 Riot ID")]
         string riotId,
@@ -77,11 +77,11 @@ public class AtoZModule : InteractionModuleBase<SocketInteractionContext>
         if (result.IsSuccess)
         {
             // 새 멤버가 등록되면, 예전엔 "5명 미달"이라 저장 안 됐던 매치가 이 사람 덕분에 채워질 수 있으므로
-            // 다음 /전적수집에서 다시 평가하도록 캐시를 리셋합니다.
+            // 다음 /atoz 전적수집에서 다시 평가하도록 캐시를 리셋합니다.
             var resetCount = await _matchRepository.ResetUnqualifiedCheckedMatchesAsync(Context.Guild.Id);
             if (resetCount > 0)
             {
-                message += $"\n🔄 이전에 5명 미달로 저장 안 됐던 매치 {resetCount}건을 다음 `/전적수집`에서 다시 확인하도록 초기화했습니다.";
+                message += $"\n🔄 이전에 5명 미달로 저장 안 됐던 매치 {resetCount}건을 다음 `/atoz 전적수집`에서 다시 확인하도록 초기화했습니다.";
             }
         }
 
@@ -89,6 +89,7 @@ public class AtoZModule : InteractionModuleBase<SocketInteractionContext>
     }
 
     [SlashCommand("부캐등록", "이미 본캐로 등록된 멤버에게 부캐(다른 Riot 계정)를 연결합니다. 전적 통계는 본캐 기준으로 합산됩니다.")]
+    [DefaultMemberPermissions(GuildPermission.ManageGuild)]
     public async Task RegisterAltAsync(
         [Summary("부캐롤아이디", "게임이름#태그 형식의 부캐 Riot ID")]
         string riotId,
@@ -146,11 +147,11 @@ public class AtoZModule : InteractionModuleBase<SocketInteractionContext>
         if (result.IsSuccess)
         {
             // 새 부캐가 등록되면, 예전엔 "5명 미달"이라 저장 안 됐던 매치가 이 계정 덕분에 채워질 수 있으므로
-            // 다음 /전적수집에서 다시 평가하도록 캐시를 리셋합니다.
+            // 다음 /atoz 전적수집에서 다시 평가하도록 캐시를 리셋합니다.
             var resetCount = await _matchRepository.ResetUnqualifiedCheckedMatchesAsync(Context.Guild.Id);
             if (resetCount > 0)
             {
-                message += $"\n🔄 이전에 5명 미달로 저장 안 됐던 매치 {resetCount}건을 다음 `/전적수집`에서 다시 확인하도록 초기화했습니다.";
+                message += $"\n🔄 이전에 5명 미달로 저장 안 됐던 매치 {resetCount}건을 다음 `/atoz 전적수집`에서 다시 확인하도록 초기화했습니다.";
             }
         }
 
@@ -158,6 +159,7 @@ public class AtoZModule : InteractionModuleBase<SocketInteractionContext>
     }
 
     [SlashCommand("멤버목록", "AtoZ에 등록된 멤버(본캐/부캐) 현황을 보여줍니다. 잘못 등록됐는지 확인용.")]
+    [DefaultMemberPermissions(GuildPermission.ManageGuild)]
     public async Task ListMembersAsync()
     {
         await DeferAsync(ephemeral: true);
@@ -206,13 +208,14 @@ public class AtoZModule : InteractionModuleBase<SocketInteractionContext>
             .WithTitle("AtoZ 등록 멤버 현황")
             .WithColor(Color.Teal)
             .WithDescription(lines.ToString())
-            .WithFooter($"본캐 {members.Count}명 · 부캐 {altAccounts.Count}개 · 수집된 경기 수는 자유 랭크(/전적수집, /리플업로드 저장분) 기준")
+            .WithFooter($"본캐 {members.Count}명 · 부캐 {altAccounts.Count}개 · 수집된 경기 수는 자유 랭크(/atoz 전적수집) 기준")
             .Build();
 
         await FollowupAsync(embed: embed, ephemeral: true);
     }
 
     [SlashCommand("멤버삭제", "잘못 등록된 AtoZ 멤버를 삭제합니다 (연결된 부캐도 함께 삭제). 이미 수집된 전적 기록은 남아있습니다.")]
+    [DefaultMemberPermissions(GuildPermission.ManageGuild)]
     public async Task DeleteMemberAsync(
         [Summary("멤버", "등록을 삭제할 Discord 멤버")]
         IUser member)
@@ -252,6 +255,7 @@ public class AtoZModule : InteractionModuleBase<SocketInteractionContext>
     }
 
     [SlashCommand("부캐삭제", "등록된 부캐 연결을 삭제합니다. 본캐 등록에는 영향이 없습니다.")]
+    [DefaultMemberPermissions(GuildPermission.ManageGuild)]
     public async Task DeleteAltAsync(
         [Summary("부캐롤아이디", "삭제할 부캐의 게임이름#태그")]
         string riotId)

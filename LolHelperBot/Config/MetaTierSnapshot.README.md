@@ -16,7 +16,7 @@
 
 **직접 채우고 싶다면:**
 1. op.gg에서 라인별 티어 리스트(자유 랭크/솔로 랭크 기준 아무 쪽이나 참고용으로 선택)를 확인합니다.
-2. 각 라인 상위 몇 개 챔피언의 티어(S/A/B/...), 승률, 그리고 그 챔피언의 "카운터" 탭에 나오는
+2. 각 라인 상위 몇 개 챔피언의 티어(OP/1/2/...), 승률, 픽률, 밴률, 그리고 그 챔피언의 "카운터" 탭에 나오는
    상위 카운터 챔피언 몇 개를 아래 형식대로 `positions` 아래 해당 라인 배열에 채워 넣습니다.
 3. `updatedAt`을 오늘 날짜(YYYY-MM-DD)로 갱신합니다.
 4. 저장만 하면 됩니다 — 봇 재시작 없이 `/밴픽추천` 실행 시마다 이 파일을 다시 읽습니다
@@ -36,8 +36,8 @@
   "source": "op.gg 라인별 티어 리스트 (수동 스냅샷)",
   "positions": {
     "TOP": [
-      { "champion": "Aatrox", "tier": "S", "winRate": 51.2, "counters": ["Malphite", "Poppy", "Ornn"] },
-      { "champion": "Jax", "tier": "A", "winRate": 50.6, "counters": ["Renekton", "Fiora"] }
+      { "champion": "Aatrox", "tier": "OP", "winRate": 51.2, "pickRate": 12.3, "banRate": 18.4, "counters": ["Malphite", "Poppy", "Ornn"] },
+      { "champion": "Jax", "tier": "1", "winRate": 50.6, "pickRate": 8.1, "banRate": 11.2, "counters": ["Renekton", "Fiora"] }
     ],
     "JUNGLE": [],
     "MIDDLE": [],
@@ -47,6 +47,6 @@
 }
 ```
 
-- `tier`, `winRate`는 표시용이라 대략적인 값이어도 괜찮습니다.
+- `tier`, `winRate`, `pickRate`, `banRate`는 표시와 메타픽 TOP 3 선정에 사용합니다.
 - `counters`는 없어도 되지만(빈 배열 `[]`), 있으면 `/밴픽추천` 픽 추천 줄에 "카운터: X, Y" 형태로
   같이 표시됩니다.
