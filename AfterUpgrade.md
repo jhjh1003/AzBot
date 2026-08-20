@@ -61,14 +61,22 @@ ARCHITECTURE.md도 같이 갱신하는 걸 원칙으로 함.
   소규모 클랜 봇 규모에서 과할 수 있다고 판단해 보류. 실제 회귀가 자꾸 발생하는 등 필요성이
   뚜렷해지면 재검토.
 
-## 5. op.gg 메타 스냅샷 — 캡처 처리 대기 중
+## 5. op.gg 메타 스냅샷 — 처리 완료 (커밋 대기)
 
-`LolHelperBot/Config/OpggCaptures/260820/`에 라인별 티어 리스트 캡처 5장
-(`tier_TOP.png`/`tier_JUNGLE.png`/`tier_MIDDLE.png`/`tier_BOTTOM.png`/`tier_UTILITY.png`)이 이미
-들어있음(2단계 `/밴픽추천` op.gg 연동 때 합의한 수동 스냅샷 워크플로우 — README 참고). 아직
-`Config/MetaTierSnapshot.json`에 반영 안 함. "최신 캡처 처리해줘"라고 요청하면 이미지를 읽고
-JSON을 채운 뒤, 처리한 폴더에 `Config/OpggCaptures/README.md`가 설명하는 `PROCESSED.md` 마커를
-남기면 됨.
+`Config/OpggCaptures/260820/`의 티어 리스트 캡처 5장은 처리 완료됨(`PROCESSED.md` 마커 확인,
+처리일 2026-08-20) — `MetaTierSnapshot.json`에 라인별 상위 10개 챔피언의 티어·승률·픽률·밴률이
+채워져 있음. `/밴픽추천`도 이 데이터를 쓰는 "메타픽 Top3" 섹션이 추가된 상태로 로컬에 존재.
+**다만 이 작업 전부(로컬 변경사항)가 아직 git 커밋이 안 돼 있음** — 다음에 이어서 작업할 때
+`git status`로 확인하고 커밋부터 하고 시작할 것. 카운터 캡처(`counter_*.png`)는 아직 없어서
+`counters` 필드는 빈 배열 상태 — 필요하면 나중에 추가로 캡처해서 채울 수 있음.
+
+## 6. 클라우드 배포 — Dockerfile 작성됨, 빌드 테스트 필요
+
+로컬 PC 대신 클라우드 VM(Oracle Cloud Always Free 추천)에서 24시간 돌리기 위한
+`Dockerfile`/`.dockerignore`/`DEPLOY.md`를 2026-08-20에 작성함. **로컬에 Docker가 없는 환경에서
+작성돼 `docker build`로 실제 빌드해본 적은 없음** — 다음에 이어서 진행할 때 DEPLOY.md 1절의
+로컬 빌드·실행 테스트부터 먼저 해보고, 문제가 있으면 Dockerfile을 고칠 것. 이후 단계(Oracle
+Cloud VM 실제 생성·배포)도 아직 안 함.
 
 ---
 

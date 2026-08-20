@@ -1,0 +1,26 @@
+# 빌드 산출물 (Docker 안에서 새로 빌드하므로 호스트 것을 복사할 필요 없음)
+**/bin/
+**/obj/
+**/.vs/
+
+# 버전관리/에디터/세션 도구
+.git/
+.claude/
+.github/
+
+# 로컬 전용 설정/시크릿 (컨테이너에는 -e 환경변수로 주입, 이미지에 절대 안 들어가야 함)
+.env
+.env.*
+**/appsettings.Local.json
+**/appsettings.Development.json
+**/*.user
+
+# 로컬 SQLite 데이터 (컨테이너에서는 볼륨을 씀, 이미지에 옛날 DB가 들어가면 안 됨)
+*.db
+*.db-shm
+*.db-wal
+
+# 문서/캡처 이미지 (빌드에 불필요, 컨텍스트 전송 속도만 늦춤)
+*.md
+LolHelperBot/Config/OpggCaptures/
+assets/
