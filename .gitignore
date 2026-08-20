@@ -17,3 +17,7 @@ appsettings.Development.json
 
 # Claude Code 로컬 런타임 상태 (세션 락 파일 등 — 커밋 대상 아님)
 .claude/
+
+# 클라우드 배포용 SSH 개인키 (절대 커밋 금지 — 노출되면 서버에 누구나 접속 가능해짐)
+*.key
+*.pem
