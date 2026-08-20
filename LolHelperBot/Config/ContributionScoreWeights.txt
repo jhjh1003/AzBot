@@ -1,0 +1,108 @@
+# ============================================================
+# 기여도 점수 가중치 설정 (/함께한전적, /명예의전당) — v3: 맞라인 상대 비교
+# ============================================================
+#
+# 형식: 라인.지표 = 가중치        (# 뒤는 주석, 빈 줄 무시)
+# 이 파일을 수정하고 봇을 재시작(재빌드 포함)하면 새 가중치가 바로 적용됩니다.
+# 코드를 건드릴 필요 없이 숫자만 바꾸면 튜닝됩니다.
+#
+# ------------------------------------------------------------
+# 여기까지 오게 된 과정 (자세한 로그는 CHANGELOG.md 참고)
+# ------------------------------------------------------------
+# v1(팀 내 비율%)·v2(팀 내 순위, 라인별 가중평균)까지는 "그 판 우리 팀 AtoZ 5명끼리"
+# 비교하는 방식이었는데, 30경기 실데이터 검증 결과 원딜/서폿처럼 특정 지표를 구조적으로
+# 독점하는 라인이 계속 유리하고 정글처럼 어느 지표도 확실히 못 이기는 "제너럴리스트"
+# 라인은 계속 불리한 구조적 편향이 3라운드 튜닝으로도 안 풀렸습니다.
+#
+# 그래서 v3부터는 비교 축을 아예 바꿨습니다 — **같은 팀 5명이 아니라 같은 라인의 상대
+# (맞라인)와 1:1로 비교**합니다. 정글은 상대 정글러랑만, 서폿은 상대 서폿이랑만 비교하니
+# 라인 간 구조적 차이가 원천적으로 사라집니다. (원딜/서폿처럼 듀오 라인인 경우도 "같은
+# team_position(같은 라인)의 상대 팀 참가자"로 정의합니다 — 원딜은 상대 원딜과, 서폿은
+# 상대 서폿과 비교)
+#
+# ------------------------------------------------------------
+# 지표 목록 (전부 "나 vs 맞라인 상대"의 2자 비율로 계산 — 50이 동률, 100이 완전 압도)
+# ------------------------------------------------------------
+#   gold_earned          획득 골드 ("성장")
+#   creep_score           CS ("골드수급" — gold_earned와 별개로, 순수 파밍 효율만 봄)
+#   damage_dealt          챔피언 대상 딜량 ("입힌피해량")
+#   damage_taken          받은 피해량
+#   cc_time                 적에게 건 크라우드 컨트롤 시간
+#   vision_score            시야 점수
+#   wards_placed            설치한 와드 수
+#   heal_amount             아군에게 건 힐량
+#   damage_to_objectives    오브젝트(용/바론/타워 등) 대상 딜량 ("오브젝트 기여도")
+#   kda                     KDA = (킬+어시)/max(1,데스)를 맞라인 상대와 비교
+#
+# 아래 2개는 "맞라인 비교"가 아니라 다른 방식으로 계산되는 특수 지표입니다:
+#   kill_participation      (킬+어시)/우리 팀(5명) 총 킬 — 맞라인이 아니라 "우리 팀 전체
+#                             KDA에 얼마나 기여했는지"를 보는 지표라서 팀 기준 그대로 사용
+#   damage_deficit_offset   **딜량 격차 보정**. 딜량에서 많이 밀렸을수록(예: 탱커형 탑이
+#                             딜러형 탑을 상대), 받은피해량·CC가 평균 이상인 만큼 보너스를
+#                             줘서 "몸빵/이니시로 기여"한 걸 딜량 부족과 상쇄해줍니다.
+#                             (탱커형 vs 딜러형처럼 서로 다른 역할의 챔피언이 같은 라인에서
+#                             붙을 수 있다는 걸 감안한 보정)
+#   cc_or_heal              CC 기여와 힐 기여 중 **더 큰 쪽**을 자동으로 골라 반영합니다
+#                             (서폿이 CC형이든 힐형이든 자기 강점으로 평가받게 하기 위함)
+#
+# ------------------------------------------------------------
+
+# 탑: 상대 탑과 KDA차이가 가장 중요, 골드수급·성장은 동급, 입힌/받은피해량은 상충 관계로
+# 동급 취급(탱커형·딜러형 탑 모두 인정), 딜량 격차 보정도 확실히 반영
+TOP.kda = 1.0
+TOP.creep_score = 0.8
+TOP.gold_earned = 0.8
+TOP.damage_dealt = 0.5
+TOP.damage_taken = 0.5
+TOP.damage_deficit_offset = 0.5
+TOP.wards_placed = 0.3
+TOP.vision_score = 0.2
+TOP.cc_time = 0.2
+TOP.kill_participation = 0.3
+
+# 정글: KDA차이, 골드수급, 성장, 오브젝트, 시야점수 순으로 중요, 나머지는 비슷하게
+JUNGLE.kda = 1.0
+JUNGLE.creep_score = 0.8
+JUNGLE.gold_earned = 0.8
+JUNGLE.damage_to_objectives = 0.6
+JUNGLE.vision_score = 0.5
+JUNGLE.kill_participation = 0.4
+JUNGLE.damage_dealt = 0.3
+JUNGLE.damage_taken = 0.3
+JUNGLE.cc_time = 0.3
+JUNGLE.wards_placed = 0.3
+JUNGLE.damage_deficit_offset = 0.3
+
+# 미드: KDA차이, 골드수급, 성장, 오브젝트 순, 나머지는 비슷하게
+MIDDLE.kda = 1.0
+MIDDLE.creep_score = 0.8
+MIDDLE.gold_earned = 0.8
+MIDDLE.damage_to_objectives = 0.5
+MIDDLE.damage_dealt = 0.3
+MIDDLE.damage_taken = 0.3
+MIDDLE.vision_score = 0.3
+MIDDLE.wards_placed = 0.3
+MIDDLE.kill_participation = 0.3
+
+# 원딜: KDA차이, 골드수급, 성장, 입힌피해량 순, 나머지는 비슷하게
+BOTTOM.kda = 1.0
+BOTTOM.creep_score = 0.8
+BOTTOM.gold_earned = 0.8
+BOTTOM.damage_dealt = 0.6
+BOTTOM.damage_taken = 0.3
+BOTTOM.vision_score = 0.3
+BOTTOM.wards_placed = 0.3
+BOTTOM.kill_participation = 0.3
+BOTTOM.damage_to_objectives = 0.3
+
+# 서폿: KDA차이, 시야점수, 오브젝트, (CC/힐 중 큰 쪽), 성장, 골드 순, 나머지는 비슷하게
+UTILITY.kda = 1.0
+UTILITY.vision_score = 0.8
+UTILITY.damage_to_objectives = 0.6
+UTILITY.cc_or_heal = 0.6
+UTILITY.wards_placed = 0.5
+UTILITY.gold_earned = 0.4
+UTILITY.creep_score = 0.3
+UTILITY.damage_taken = 0.3
+UTILITY.kill_participation = 0.3
+UTILITY.damage_dealt = 0.15

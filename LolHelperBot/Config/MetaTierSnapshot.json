@@ -1,0 +1,11 @@
+{
+  "updatedAt": null,
+  "source": "op.gg 라인별 티어 리스트 (수동 스냅샷) — 채워넣으면 /밴픽추천에 반영됩니다. 사용법은 Config/MetaTierSnapshot.README.md 참고.",
+  "positions": {
+    "TOP": [],
+    "JUNGLE": [],
+    "MIDDLE": [],
+    "BOTTOM": [],
+    "UTILITY": []
+  }
+}
