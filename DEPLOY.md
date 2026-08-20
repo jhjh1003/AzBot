@@ -68,28 +68,147 @@ docker run -d \
 빼둠). 실행할 때마다 `-e`로 넣거나, `.env` 파일 + `docker run --env-file .env`를 씁니다. `.env`
 파일 자체는 `.gitignore`/`.dockerignore`에 이미 걸려 있어서 커밋되지 않습니다.
 
-## 4. 클라우드 VM에 올리기 (예: Oracle Cloud Always Free)
+## 4. 클라우드 VM에 올리기 — Oracle Cloud Always Free, 스텝 바이 스텝
 
-1. Oracle Cloud 계정 생성 → Always Free 규격 VM(예: Ampere A1, 1 OCPU/6GB 정도면 이 봇엔 넉넉)
-   인스턴스 생성. Ubuntu 이미지 권장.
-2. VM에 SSH 접속 후 Docker 설치.
-   ```bash
-   curl -fsSL https://get.docker.com | sudo sh
-   sudo usermod -aG docker $USER   # 재접속 필요
-   ```
-3. 이 저장소를 VM에 클론(또는 `git archive`로 소스만 옮겨도 됨):
-   ```bash
-   git clone https://github.com/jhjh1003/AzBot.git
-   cd AzBot
-   docker build -t azbot .
-   ```
-4. 위 2절의 `docker run` 명령으로 실행. 방화벽/보안그룹 설정은 **필요 없습니다** — 이 봇은
-   외부에서 들어오는 연결을 받는 서버가 아니라, 봇이 디스코드로 "나가는" 연결만 만들기
-   때문입니다(포트 개방 불필요).
-5. VM이 재부팅돼도 자동으로 다시 뜨는지 확인하려면 VM을 한 번 재부팅해보고
-   `docker ps`로 `azbot` 컨테이너가 다시 떠 있는지 확인하세요.
+### 4-1. Oracle Cloud 계정 만들기
 
-## 5. 앞으로 고려할 것
+1. https://www.oracle.com/cloud/free/ 접속 → "Start for free" 클릭.
+2. 이메일 인증 → 국가/이름 등 기본 정보 입력 → **결제 정보(카드) 입력**을 요구합니다. Always
+   Free 리소스만 쓰면 돈이 안 빠져나가지만, 본인 확인용으로 카드 등록 자체는 필수입니다(해외
+   결제 가능한 카드 필요). 이 단계에서 막히면 카드사에 "해외 승인" 여부부터 확인해보세요.
+3. 가입 완료 후 콘솔(Console) 로그인.
+
+### 4-2. VM(인스턴스) 만들기
+
+1. 콘솔 왼쪽 상단 ☰ 메뉴 → **Compute → Instances → Create Instance**.
+2. **Name**: `azbot` 등 원하는 이름.
+3. **Image and shape**:
+   - Image: **Ubuntu** (최신 LTS, 예: 24.04) 선택.
+   - Shape: **"Edit"** 클릭 → **Ampere(Arm 기반)** 계열 중 `VM.Standard.A1.Flex` 선택 → OCPU
+     1개, 메모리 6GB 정도로 설정(이 봇 규모엔 넉넉함). 이게 **Always Free**로 표시되는지
+     확인하고 진행하세요(Always Free 한도 안에서만 무료입니다 — 화면에 "Always Free eligible"
+     문구가 뜹니다).
+4. **Networking**: 기본값 그대로 두면 됩니다(새 VCN 자동 생성, Public IP 자동 할당). 별도로
+   포트를 열 필요는 없습니다 — 이 봇은 외부에서 들어오는 연결을 받는 서버가 아니라 디스코드
+   쪽으로 "나가는" 연결만 만들기 때문입니다.
+5. **Add SSH keys**: "Generate a key pair for me" 선택 → **Private Key 다운로드 버튼을 꼭
+   눌러서 저장**(다시 못 받습니다). 파일명 예: `ssh-key-2026-08-21.key`.
+6. **Create** 클릭 → 1~2분 기다리면 인스턴스가 "RUNNING" 상태가 됩니다.
+7. 인스턴스 상세 페이지에서 **Public IP Address**를 확인해서 메모해두세요(예: `123.45.67.89`).
+
+### 4-3. SSH로 VM에 접속하기 (Windows)
+
+Windows 11은 OpenSSH 클라이언트가 기본 내장돼 있어서 PowerShell에서 바로 됩니다. 다운받은
+개인키 파일이 있는 폴더에서:
+
+```powershell
+# 개인키 권한을 너무 열어두면 ssh가 거부합니다 — 본인만 읽을 수 있게 제한
+icacls .\ssh-key-2026-08-21.key /inheritance:r
+icacls .\ssh-key-2026-08-21.key /grant:r "$($env:USERNAME):(R)"
+
+ssh -i .\ssh-key-2026-08-21.key ubuntu@123.45.67.89
+```
+
+(Oracle Ubuntu 이미지의 기본 사용자는 `ubuntu`입니다.) 처음 접속 시 "fingerprint를 신뢰하냐"는
+질문엔 `yes`를 입력합니다. 접속되면 VM의 셸이 뜹니다 — 이제부터 아래 명령은 전부 **VM
+안에서** 실행합니다.
+
+### 4-4. VM에 Docker 설치
+
+```bash
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER
+```
+
+`usermod` 실행 후에는 `exit`로 나갔다가 4-3의 `ssh` 명령으로 다시 접속해야 그룹 변경이
+적용됩니다(매번 `sudo` 안 붙이려면).
+
+### 4-5. 코드 가져와서 빌드 + 실행
+
+```bash
+git clone https://github.com/jhjh1003/AzBot.git
+cd AzBot
+docker build -t azbot .
+```
+
+빌드가 끝나면(레포가 작아서 몇 분 안 걸립니다), 시크릿을 담을 `.env` 파일을 VM에 직접
+만듭니다(이 파일은 절대 git에 올리지 않습니다 — VM 로컬에만 존재):
+
+```bash
+cat > .env <<'EOF'
+Discord__Token=여기에_봇_토큰
+Discord__GuildId=여기에_서버_ID
+Riot__ApiKey=여기에_Riot_API_키
+EOF
+
+docker volume create azbot-data
+
+docker run -d \
+  --name azbot \
+  --restart unless-stopped \
+  -v azbot-data:/data \
+  --env-file .env \
+  azbot
+```
+
+### 4-6. 확인
+
+```bash
+docker ps                 # azbot 컨테이너가 Up 상태인지
+docker logs -f azbot       # [준비 완료] ... 메시지 확인 (Ctrl+C로 로그 보기 종료, 컨테이너는 안 멈춤)
+```
+
+디스코드에서 `/ping`을 쳐서 응답 오면 성공입니다. 기존에 로컬에서 쌓아둔 DB
+(`%LOCALAPPDATA%\LolHelperBot\lol-helper.db`)를 이어서 쓰고 싶다면, VM으로 파일을 복사한
+뒤(`scp -i 키파일 lol-helper.db ubuntu@IP:~/`) 아래처럼 볼륨 안에 넣어줍니다:
+
+```bash
+docker run --rm -v azbot-data:/data -v ~/:/host alpine cp /host/lol-helper.db /data/lol-helper.db
+```
+
+### 4-7. VM 재부팅돼도 자동으로 다시 뜨는지 확인 (선택)
+
+```bash
+sudo reboot
+```
+
+몇 분 후 다시 SSH 접속해서 `docker ps`로 `azbot`이 다시 떠 있는지 확인합니다
+(`--restart unless-stopped` 덕분에 Docker 데몬이 뜨면 컨테이너도 자동으로 같이 뜹니다).
+
+## 5. 업데이트(재배포) — 로컬에서 고치고 VM에 반영하기
+
+로컬 흐름은 지금까지 하던 대로입니다: 코드 수정 → `dotnet run`으로 테스트 → 문제없으면
+`git push`. VM에 반영하는 건 아래 4줄이 전부입니다(볼륨은 그대로 재사용되므로 **DB는 안
+날아갑니다**):
+
+```bash
+ssh -i .\ssh-key-2026-08-21.key ubuntu@123.45.67.89   # VM 접속
+cd AzBot
+git pull
+docker build -t azbot .
+docker stop azbot && docker rm azbot
+docker run -d --name azbot --restart unless-stopped -v azbot-data:/data --env-file .env azbot
+```
+
+자주 쓸 것 같으면 VM에 아래처럼 스크립트로 저장해두고 `./redeploy.sh` 한 줄로 끝낼 수도
+있습니다:
+
+```bash
+cat > redeploy.sh <<'EOF'
+#!/bin/bash
+set -e
+cd ~/AzBot
+git pull
+docker build -t azbot .
+docker stop azbot || true
+docker rm azbot || true
+docker run -d --name azbot --restart unless-stopped -v azbot-data:/data --env-file .env azbot
+echo "재배포 완료. 로그: docker logs -f azbot"
+EOF
+chmod +x redeploy.sh
+```
+
+## 6. 앞으로 고려할 것
 
 - **CI로 이미지 자동 빌드**: 지금은 수동으로 `docker build`. GitHub Actions로 push할 때마다
   이미지를 빌드해서 레지스트리에 올리는 것도 나중에 고려 가능(당장은 불필요).
