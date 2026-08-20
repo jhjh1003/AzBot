@@ -94,6 +94,9 @@ var metaTierRepository = new MetaTierRepository(metaTierSnapshotPath);
 // 리팩토링 2단계 — /밴픽추천 계산 로직을 서비스로 분리(Modules는 "서비스 호출 → Embed 변환"만 담당).
 var banPickRecommendationService = new BanPickRecommendationService(matchRepository, metaTierRepository);
 
+// 리팩토링 2단계 — /티어픽 계산 로직도 같은 패턴으로 서비스 분리.
+var championTierService = new ChampionTierService(matchRepository);
+
 // AfterUpgrade.md 1단계 실험 전용 진입점: `dotnet run -- timeline-test [매치수]`
 // Discord 봇은 켜지 않고, 저장된 최근 클랜 매치에 대해 Timeline API를 찍어보고 콘솔에만 출력합니다.
 if (args.Length > 0 && args[0] == "timeline-test")
@@ -111,6 +114,14 @@ if (args.Length > 0 && args[0] == "banpick-test")
     return;
 }
 
+// /티어픽 리팩토링 스모크 테스트: `dotnet run -- tier-test [라인]`.
+if (args.Length > 0 && args[0] == "tier-test")
+{
+    var tierTestPosition = args.Length > 1 ? args[1] : null;
+    await ChampionTierQueryExperiment.RunAsync(matchRepository, championTierService, databasePath, guildId, tierTestPosition);
+    return;
+}
+
 var services = new ServiceCollection()
     .AddSingleton(client)
     .AddSingleton(riotApiClient)
@@ -119,6 +130,7 @@ var services = new ServiceCollection()
     .AddSingleton(contributionScoreCalculator)
     .AddSingleton(metaTierRepository)
     .AddSingleton(banPickRecommendationService)
+    .AddSingleton(championTierService)
     .AddSingleton<InteractionService>(sp => new InteractionService(sp.GetRequiredService<DiscordSocketClient>()))
     .BuildServiceProvider();
 

@@ -13,6 +13,7 @@ using Discord.Interactions;
 using LolHelperBot.Services;
 using static LolHelperBot.Services.ClanConstants;
 using static LolHelperBot.Services.MarkdownFormatter;
+using static LolHelperBot.Services.PositionOrder;
 using static LolHelperBot.Services.RiotIdParser;
 
 namespace LolHelperBot.Modules;
@@ -38,6 +39,7 @@ public class ClanStatsModule : InteractionModuleBase<SocketInteractionContext>
     private readonly ContributionScoreCalculator _contributionScoreCalculator;
     private readonly MetaTierRepository _metaTierRepository;
     private readonly BanPickRecommendationService _banPickRecommendationService;
+    private readonly ChampionTierService _championTierService;
 
     public ClanStatsModule(
         RiotApiClient riotApiClient,
@@ -45,7 +47,8 @@ public class ClanStatsModule : InteractionModuleBase<SocketInteractionContext>
         MatchRepository matchRepository,
         ContributionScoreCalculator contributionScoreCalculator,
         MetaTierRepository metaTierRepository,
-        BanPickRecommendationService banPickRecommendationService)
+        BanPickRecommendationService banPickRecommendationService,
+        ChampionTierService championTierService)
     {
         _riotApiClient = riotApiClient;
         _memberRepository = memberRepository;
@@ -53,6 +56,7 @@ public class ClanStatsModule : InteractionModuleBase<SocketInteractionContext>
         _contributionScoreCalculator = contributionScoreCalculator;
         _metaTierRepository = metaTierRepository;
         _banPickRecommendationService = banPickRecommendationService;
+        _championTierService = championTierService;
     }
 
     [SlashCommand("전적수집", "등록된 AtoZ 멤버들의 최근 자유 랭크 전적을 모아 통계 DB에 저장합니다.")]
@@ -737,6 +741,8 @@ public class ClanStatsModule : InteractionModuleBase<SocketInteractionContext>
         await FollowupAsync(embed: embed, ephemeral: true);
     }
 
+    // 리팩토링 2단계(2026-08-20): 계산(쿼리·정렬·필터, N+1이었던 플레이어 지분 조회 포함)은
+    // ChampionTierService로 옮기고, 여기는 "서비스 호출 → Embed로 그리기"만 담당합니다.
     [SlashCommand("티어픽", "우리 클랜 전적 데이터 기준 라인별 챔피언 티어를 보여줍니다.")]
     public async Task ShowChampionTierAsync(
         [Summary("라인", "탑/정글/미드/원딜/서폿 중 선택. 생략하면 전체 라인")]
@@ -756,17 +762,11 @@ public class ClanStatsModule : InteractionModuleBase<SocketInteractionContext>
         }
 
         var positionFilter = string.IsNullOrEmpty(position) ? null : position;
-        var rows = await _matchRepository.GetChampionTierAsync(Context.Guild.Id, FlexQueueId, positionFilter);
-        if (rows.Count == 0)
+        var tierResult = await _championTierService.BuildAsync(Context.Guild.Id, positionFilter);
+        if (tierResult is null)
         {
             await FollowupAsync("아직 수집된 자유 랭크 전적이 없습니다. 운영자가 `/전적수집`을 먼저 실행해야 해요.");
             return;
-        }
-
-        var filtered = rows.Where(row => row.Games >= MinSampleSize).ToList();
-        if (filtered.Count == 0)
-        {
-            filtered = rows.ToList();
         }
 
         var nameByUserId = await GetDisplayNameLookupAsync(Context.Guild.Id);
@@ -776,69 +776,40 @@ public class ClanStatsModule : InteractionModuleBase<SocketInteractionContext>
             .WithColor(Color.Gold)
             .WithFooter($"자유 랭크 · 최소 {MinSampleSize}판 이상 기준 (표본 부족 시 전체 표시)");
 
-        foreach (var group in filtered.GroupBy(row => row.TeamPosition).OrderBy(group => GetPositionOrder(group.Key)))
+        foreach (var line in tierResult.Lines)
         {
-            var topRows = group
-                .OrderByDescending(row => row.Wins * 1.0 / row.Games)
-                .ThenByDescending(row => row.Games)
-                .Take(5)
-                .ToList();
-
-            var lineTexts = new List<string>(topRows.Count);
-            for (var index = 0; index < topRows.Count; index++)
+            var lineTexts = line.TopChampions.Select((entry, index) =>
             {
-                var row = topRows[index];
-                var winRate = Math.Round(row.Wins * 100.0 / row.Games);
+                var winRate = Math.Round(entry.Wins * 100.0 / entry.Games);
                 var rank = index == 0 ? "👑" : $"{index + 1}.";
-                var lineText = $"{rank} **{EscapeMarkdown(row.ChampionName)}** — {row.Games}판 {row.Wins}승 · 승률 {winRate}%";
+                var text = $"{rank} **{EscapeMarkdown(entry.ChampionName)}** — {entry.Games}판 {entry.Wins}승 · 승률 {winRate}%";
 
-                // 몇 위든 누가 얼마나 플레이했는지(지분율)를 같이 보여줍니다.
-                var players = await _matchRepository.GetChampionPlayersAsync(
-                    Context.Guild.Id, FlexQueueId, group.Key, row.ChampionName);
-                var shareText = FormatPlayerShares(players, nameByUserId);
+                var shareText = FormatPlayerShares(entry.Players, nameByUserId);
                 if (shareText.Length > 0)
                 {
-                    lineText += $" ({shareText})";
+                    text += $" ({shareText})";
                 }
 
-                lineTexts.Add(lineText);
-            }
+                return text;
+            });
 
-            embed.AddField(GetKoreanPosition(group.Key), string.Join("\n", lineTexts));
+            embed.AddField(GetKoreanPosition(line.Position), string.Join("\n", lineTexts));
         }
 
-        // 라인 구분 없이 전체 챔피언 중 승률 워스트 5개.
-        var overallRows = await _matchRepository.GetOverallChampionStatsAsync(Context.Guild.Id, FlexQueueId);
-        var overallSampled = overallRows.Where(row => row.Games >= MinSampleSize).ToList();
-        if (overallSampled.Count == 0)
+        var worstLines = tierResult.WorstOverall.Select((entry, index) =>
         {
-            overallSampled = overallRows.ToList();
-        }
-
-        var worstOverallPool = overallSampled.Where(row => row.Wins * 1.0 / row.Games < 0.5).ToList();
-        var worstOverallRows = worstOverallPool
-            .OrderBy(row => row.Wins * 1.0 / row.Games)
-            .ThenByDescending(row => row.Games)
-            .Take(5)
-            .ToList();
-
-        var worstLines = new List<string>(worstOverallRows.Count);
-        for (var index = 0; index < worstOverallRows.Count; index++)
-        {
-            var row = worstOverallRows[index];
-            var winRate = Math.Round(row.Wins * 100.0 / row.Games);
+            var winRate = Math.Round(entry.Wins * 100.0 / entry.Games);
             var rank = index == 0 ? "💀" : $"{index + 1}.";
-            var lineText = $"{rank} **{EscapeMarkdown(row.ChampionName)}** — {row.Games}판 {row.Wins}승 · 승률 {winRate}%";
+            var text = $"{rank} **{EscapeMarkdown(entry.ChampionName)}** — {entry.Games}판 {entry.Wins}승 · 승률 {winRate}%";
 
-            var players = await _matchRepository.GetOverallChampionPlayersAsync(Context.Guild.Id, FlexQueueId, row.ChampionName);
-            var shareText = FormatPlayerShares(players, nameByUserId);
+            var shareText = FormatPlayerShares(entry.Players, nameByUserId);
             if (shareText.Length > 0)
             {
-                lineText += $" ({shareText})";
+                text += $" ({shareText})";
             }
 
-            worstLines.Add(lineText);
-        }
+            return text;
+        }).ToList();
 
         var worstOverallText = worstLines.Count > 0
             ? string.Join("\n", worstLines)
@@ -1560,16 +1531,7 @@ public class ClanStatsModule : InteractionModuleBase<SocketInteractionContext>
     };
 
     // GetTierRank는 2026-08-20 리팩토링 2단계에서 BanPickRecommendationService로 이관됨(사용처가 그 서비스뿐이었음).
-
-    private static int GetPositionOrder(string position) => position switch
-    {
-        "TOP" => 0,
-        "JUNGLE" => 1,
-        "MIDDLE" => 2,
-        "BOTTOM" => 3,
-        "UTILITY" => 4,
-        _ => 5,
-    };
+    // GetPositionOrder는 같은 날 Services/PositionOrder.cs로 이관됨(모듈+서비스 양쪽에서 쓰여서 공용 유틸로 뺌).
 
     // TryParseRiotId/CanManageMembers/EscapeMarkdown은 2026-08-20 리팩토링 1단계에서
     // Services/RiotIdParser.cs, PermissionChecker.cs, MarkdownFormatter.cs로 이관됨

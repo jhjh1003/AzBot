@@ -557,43 +557,62 @@ public class MatchRepository
     }
 
     /// <summary>
-    /// 특정 라인+챔피언 조합을 누가 플레이했는지(판수 포함) 집계합니다. /티어픽 상위권 아이디 표기용.
+    /// 여러 (라인, 챔피언) 조합을 누가 플레이했는지(판수 포함) 한 번의 쿼리로 집계합니다.
+    /// /티어픽 상위권 아이디 표기용 — 예전엔 챔피언 한 줄마다 이 쿼리를 따로 호출했는데
+    /// (N+1 패턴, 외부 코드리뷰 지적), 필요한 (라인,챔피언) 쌍을 한 번에 모아서 SQLite의
+    /// row-value IN 문법으로 한 번만 조회하도록 2026-08-20 리팩토링에서 바꿈.
     /// </summary>
-    public async Task<IReadOnlyList<ChampionPlayerRow>> GetChampionPlayersAsync(
+    public async Task<IReadOnlyDictionary<(string Position, string ChampionName), IReadOnlyList<ChampionPlayerRow>>> GetChampionPlayersBatchAsync(
         ulong guildId,
         int queueId,
-        string teamPosition,
-        string championName,
+        IReadOnlyList<(string Position, string ChampionName)> pairs,
         CancellationToken cancellationToken = default)
     {
+        var empty = new Dictionary<(string, string), IReadOnlyList<ChampionPlayerRow>>();
+        if (pairs.Count == 0)
+        {
+            return empty;
+        }
+
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
+        var valuePlaceholders = pairs.Select((_, index) => $"($pos{index}, $champ{index})").ToList();
         var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT discord_user_id, COUNT(*) AS games, SUM(win) AS wins
+        command.CommandText = $"""
+            SELECT team_position, champion_name, discord_user_id, COUNT(*) AS games, SUM(win) AS wins
             FROM match_participations
             WHERE guild_id = $guildId AND queue_id = $queueId
-                AND team_position = $position AND champion_name = $champion
-            GROUP BY discord_user_id
+                AND (team_position, champion_name) IN ({string.Join(",", valuePlaceholders)})
+            GROUP BY team_position, champion_name, discord_user_id
             ORDER BY games DESC;
             """;
         command.Parameters.AddWithValue("$guildId", guildId.ToString());
         command.Parameters.AddWithValue("$queueId", queueId);
-        command.Parameters.AddWithValue("$position", teamPosition);
-        command.Parameters.AddWithValue("$champion", championName);
+        for (var i = 0; i < pairs.Count; i++)
+        {
+            command.Parameters.AddWithValue($"$pos{i}", pairs[i].Position);
+            command.Parameters.AddWithValue($"$champ{i}", pairs[i].ChampionName);
+        }
 
-        var results = new List<ChampionPlayerRow>();
+        var results = new Dictionary<(string, string), List<ChampionPlayerRow>>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            results.Add(new ChampionPlayerRow(
-                ulong.Parse(reader.GetString(0)),
-                reader.GetInt32(1),
-                reader.GetInt32(2)));
+            var key = (reader.GetString(0), reader.GetString(1));
+            if (!results.TryGetValue(key, out var list))
+            {
+                list = [];
+                results[key] = list;
+            }
+
+            list.Add(new ChampionPlayerRow(
+                ulong.Parse(reader.GetString(2)),
+                reader.GetInt32(3),
+                reader.GetInt32(4)));
         }
 
-        return results;
+        return results.ToDictionary(pair => pair.Key, pair => (IReadOnlyList<ChampionPlayerRow>)pair.Value);
     }
 
     /// <summary>
@@ -725,40 +744,58 @@ public class MatchRepository
     }
 
     /// <summary>
-    /// 라인 구분 없이 특정 챔피언을 누가 플레이했는지(판수 포함) 집계합니다. /티어픽 전체 워스트 지분율 표기용.
+    /// 라인 구분 없이 여러 챔피언을 각각 누가 플레이했는지(판수 포함) 한 번의 쿼리로 집계합니다.
+    /// /티어픽 전체 워스트 지분율 표기용 — GetChampionPlayersBatchAsync와 같은 이유(N+1 제거)로
+    /// 2026-08-20 리팩토링에서 배치 쿼리로 바꿈.
     /// </summary>
-    public async Task<IReadOnlyList<ChampionPlayerRow>> GetOverallChampionPlayersAsync(
+    public async Task<IReadOnlyDictionary<string, IReadOnlyList<ChampionPlayerRow>>> GetOverallChampionPlayersBatchAsync(
         ulong guildId,
         int queueId,
-        string championName,
+        IReadOnlyList<string> championNames,
         CancellationToken cancellationToken = default)
     {
+        if (championNames.Count == 0)
+        {
+            return new Dictionary<string, IReadOnlyList<ChampionPlayerRow>>();
+        }
+
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
+        var placeholders = championNames.Select((_, index) => $"$champ{index}").ToList();
         var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT discord_user_id, COUNT(*) AS games, SUM(win) AS wins
+        command.CommandText = $"""
+            SELECT champion_name, discord_user_id, COUNT(*) AS games, SUM(win) AS wins
             FROM match_participations
-            WHERE guild_id = $guildId AND queue_id = $queueId AND champion_name = $champion
-            GROUP BY discord_user_id
+            WHERE guild_id = $guildId AND queue_id = $queueId AND champion_name IN ({string.Join(",", placeholders)})
+            GROUP BY champion_name, discord_user_id
             ORDER BY games DESC;
             """;
         command.Parameters.AddWithValue("$guildId", guildId.ToString());
         command.Parameters.AddWithValue("$queueId", queueId);
-        command.Parameters.AddWithValue("$champion", championName);
+        for (var i = 0; i < championNames.Count; i++)
+        {
+            command.Parameters.AddWithValue($"$champ{i}", championNames[i]);
+        }
 
-        var results = new List<ChampionPlayerRow>();
+        var results = new Dictionary<string, List<ChampionPlayerRow>>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            results.Add(new ChampionPlayerRow(
-                ulong.Parse(reader.GetString(0)),
-                reader.GetInt32(1),
-                reader.GetInt32(2)));
+            var championName = reader.GetString(0);
+            if (!results.TryGetValue(championName, out var list))
+            {
+                list = [];
+                results[championName] = list;
+            }
+
+            list.Add(new ChampionPlayerRow(
+                ulong.Parse(reader.GetString(1)),
+                reader.GetInt32(2),
+                reader.GetInt32(3)));
         }
 
-        return results;
+        return results.ToDictionary(pair => pair.Key, pair => (IReadOnlyList<ChampionPlayerRow>)pair.Value);
     }
 
     /// <summary>

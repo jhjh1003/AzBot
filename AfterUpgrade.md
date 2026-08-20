@@ -39,6 +39,37 @@ CHANGELOG.md는 "이미 배포된 것"만 남기고, 앞으로 할지도 모르�
 - **자연어 질문 해석용 AI 레이어.** 슬래시 커맨드 대신 자연어로 물어보면 알아서 적절한 통계를
   보여주는 기능 (막연한 아이디어 단계, 구체적 설계 없음).
 
+## 4. 코드 리팩토링 백로그 (2026-08-20 외부 코드리뷰 기반)
+
+외부 코드리뷰에서 "커맨드 핸들러가 계산 로직까지 직접 한다"·"상수/유틸 중복"·"N+1 쿼리"·
+"트랜잭션 없음"·"적응형 레이트리밋 없음"·"테스트 프로젝트 없음"을 지적받고, 한 번에 다 고치지
+않고 단계별로(Strangler 방식) 진행 중. 매 단계 리팩토링 전/후 결과가 같은지 대조 확인하고,
+ARCHITECTURE.md도 같이 갱신하는 걸 원칙으로 함.
+
+- **1단계 (완료):** 상수(`FlexQueueId`/`MinSampleSize`/`RiotApiDelay`)·유틸
+  (`TryParseRiotId`/`EscapeMarkdown`/`CanManageMembers`) 중복 제거, 실험 코드(`Tools/`) 위치 분리.
+- **2단계 (진행 중, 서비스 계층 추출):**
+  - ✅ 1호: `/밴픽추천` → `BanPickRecommendationService`
+  - ✅ 2호: `/티어픽` → `ChampionTierService` (+ N+1 쿼리를 배치 쿼리로 교체,
+    `GetPositionOrder`를 공용 유틸 `PositionOrder.cs`로 분리)
+  - ⬜ 다음 후보: `/전적수집`(`CollectMatchesAsync`, ~180줄 — 부캐 충돌 감지+페이지네이션+저장이
+    섞여 있어 가장 복잡/위험도 높음), `/명예의전당`(`ShowHonorBoardAsync`)
+- **미착수 (P3/P5, 검토 후 스케줄):** 매치 저장 시 `SqliteTransaction`으로 원자성 보장(중간
+  실패 시 부분 커밋 위험 해소), Riot API 429 응답의 `Retry-After` 헤더 기반 적응형 재시도(지금은
+  고정 1.2초 대기만 함).
+- **보류 결정 유지:** 인터페이스 기반 DI(`IMatchRepository` 등) + xUnit 테스트 프로젝트 도입은
+  소규모 클랜 봇 규모에서 과할 수 있다고 판단해 보류. 실제 회귀가 자꾸 발생하는 등 필요성이
+  뚜렷해지면 재검토.
+
+## 5. op.gg 메타 스냅샷 — 캡처 처리 대기 중
+
+`LolHelperBot/Config/OpggCaptures/260820/`에 라인별 티어 리스트 캡처 5장
+(`tier_TOP.png`/`tier_JUNGLE.png`/`tier_MIDDLE.png`/`tier_BOTTOM.png`/`tier_UTILITY.png`)이 이미
+들어있음(2단계 `/밴픽추천` op.gg 연동 때 합의한 수동 스냅샷 워크플로우 — README 참고). 아직
+`Config/MetaTierSnapshot.json`에 반영 안 함. "최신 캡처 처리해줘"라고 요청하면 이미지를 읽고
+JSON을 채운 뒤, 처리한 폴더에 `Config/OpggCaptures/README.md`가 설명하는 `PROCESSED.md` 마커를
+남기면 됨.
+
 ---
 
 ## 사용자 원본 메모 (CHANGELOG.md `[미배포]`에서 그대로 복사해옴 — 원본은 삭제하지 않고 유지)
