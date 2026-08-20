@@ -37,19 +37,22 @@ public class ClanStatsModule : InteractionModuleBase<SocketInteractionContext>
     private readonly MatchRepository _matchRepository;
     private readonly ContributionScoreCalculator _contributionScoreCalculator;
     private readonly MetaTierRepository _metaTierRepository;
+    private readonly BanPickRecommendationService _banPickRecommendationService;
 
     public ClanStatsModule(
         RiotApiClient riotApiClient,
         MemberRepository memberRepository,
         MatchRepository matchRepository,
         ContributionScoreCalculator contributionScoreCalculator,
-        MetaTierRepository metaTierRepository)
+        MetaTierRepository metaTierRepository,
+        BanPickRecommendationService banPickRecommendationService)
     {
         _riotApiClient = riotApiClient;
         _memberRepository = memberRepository;
         _matchRepository = matchRepository;
         _contributionScoreCalculator = contributionScoreCalculator;
         _metaTierRepository = metaTierRepository;
+        _banPickRecommendationService = banPickRecommendationService;
     }
 
     [SlashCommand("전적수집", "등록된 AtoZ 멤버들의 최근 자유 랭크 전적을 모아 통계 DB에 저장합니다.")]
@@ -853,6 +856,10 @@ public class ClanStatsModule : InteractionModuleBase<SocketInteractionContext>
     // (2) 메타 티어 높은 챔프(op.gg 수동 스냅샷 — MetaTierRepository, 없으면 건너뜀),
     // (3) 우리 라인 베스트픽들이 유독 승률이 안 나왔던 상대(클랜 데이터, "우리 AZ 티어픽 카운터").
     // 같은 챔피언이 중복 추천되지 않도록 앞에서 뽑힌 챔피언은 다음 기준에서 제외합니다.
+    //
+    // 리팩토링 2단계(2026-08-20): 실제 계산(쿼리·필터·중복 제거)은 BanPickRecommendationService로
+    // 옮기고, 여기는 "서비스 호출 → Embed로 그리기"만 담당합니다. 서비스는 Discord 타입을 모르는
+    // 순수 데이터(BanPickRecommendation)를 돌려주므로, 나중에 필요하면 Embed 없이도 재사용/테스트 가능.
     [SlashCommand("밴픽추천", "우리 클랜 데이터 + 일반 메타(op.gg 수동 스냅샷) 기준으로 라인별 픽/밴 추천을 보여줍니다.")]
     public async Task ShowBanPickRecommendationAsync(
         [Summary("라인", "탑/정글/미드/원딜/서폿 중 선택. 생략하면 5라인 전체")]
@@ -872,137 +879,78 @@ public class ClanStatsModule : InteractionModuleBase<SocketInteractionContext>
         }
 
         var positionFilter = string.IsNullOrEmpty(position) ? null : position;
-        var positionsToShow = positionFilter is null
-            ? new[] { "TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY" }
-            : [positionFilter];
-
-        var tierRows = await _matchRepository.GetChampionTierAsync(Context.Guild.Id, FlexQueueId, positionFilter);
-        if (tierRows.Count == 0)
+        var recommendation = await _banPickRecommendationService.BuildAsync(Context.Guild.Id, positionFilter);
+        if (recommendation is null)
         {
             await FollowupAsync("아직 수집된 자유 랭크 전적이 없습니다. 운영자가 `/전적수집`을 먼저 실행해야 해요.");
             return;
         }
 
-        var metaSnapshot = await _metaTierRepository.LoadAsync();
-
         var embed = new EmbedBuilder()
             .WithTitle(positionFilter is null ? "AtoZ 밴픽 추천 (전체 라인)" : $"AtoZ 밴픽 추천 ({GetKoreanPosition(positionFilter)})")
             .WithColor(Color.Gold);
 
-        const int perLineTakeCount = 3;
-
-        foreach (var pos in positionsToShow)
+        foreach (var line in recommendation.Lines)
         {
-            var lineTierRows = tierRows.Where(row => row.TeamPosition == pos).ToList();
-            if (lineTierRows.Count == 0)
+            if (!line.HasData)
             {
-                embed.AddField(GetKoreanPosition(pos), "데이터 없음");
+                embed.AddField(GetKoreanPosition(line.Position), "데이터 없음");
                 continue;
             }
 
-            var sampledLineTierRows = lineTierRows.Where(row => row.Games >= MinSampleSize).ToList();
-            if (sampledLineTierRows.Count == 0)
-            {
-                sampledLineTierRows = lineTierRows;
-            }
-
-            // --- 픽 추천: 클랜 데이터 기준 라인 베스트픽 Top3 (+ 메타 스냅샷에 카운터 정보가 있으면 같이 표시) ---
-            var pickCandidates = sampledLineTierRows
-                .Where(row => row.Wins * 1.0 / row.Games >= 0.5)
-                .OrderByDescending(row => row.Wins * 1.0 / row.Games)
-                .ThenByDescending(row => row.Games)
-                .Take(perLineTakeCount)
-                .ToList();
-
-            var pickText = pickCandidates.Count > 0
-                ? string.Join("\n", pickCandidates.Select((row, index) =>
+            var pickText = line.Picks.Count > 0
+                ? string.Join("\n", line.Picks.Select((pick, index) =>
                 {
-                    var winRate = Math.Round(row.Wins * 100.0 / row.Games);
-                    var line = $"{GetRankLabel(index)} **{EscapeMarkdown(row.ChampionName)}** — {row.Games}판 {row.Wins}승 · 승률 {winRate}%";
-                    var counters = metaSnapshot?.GetCounters(row.ChampionName) ?? [];
-                    if (counters.Count > 0)
+                    var winRate = Math.Round(pick.Wins * 100.0 / pick.Games);
+                    var text = $"{GetRankLabel(index)} **{EscapeMarkdown(pick.ChampionName)}** — {pick.Games}판 {pick.Wins}승 · 승률 {winRate}%";
+                    if (pick.MetaCounters.Count > 0)
                     {
-                        line += $"\n　ㄴ 메타 카운터: {string.Join(", ", counters.Take(3).Select(EscapeMarkdown))}";
+                        text += $"\n　ㄴ 메타 카운터: {string.Join(", ", pick.MetaCounters.Take(3).Select(EscapeMarkdown))}";
                     }
-                    return line;
+                    return text;
                 }))
                 : "승률 50% 이상인 챔피언이 없습니다.";
 
-            // --- 밴 추천: 아래 3가지 기준에서 각각 1개씩, 중복 없이 ---
-            var banLines = new List<string>();
-            var alreadyBanned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            // (1) 맞상대 승률 낮은 챔프 — 이 라인에서 우리가 누굴 만나든 승률이 안 좋았던 상대.
-            var opponentRows = await _matchRepository.GetOpponentChampionStatsAsync(Context.Guild.Id, FlexQueueId, pos);
-            var sampledOpponents = opponentRows.Where(row => row.Games >= MinSampleSize).ToList();
-            var worstOpponent = sampledOpponents
-                .Where(row => row.Wins * 1.0 / row.Games < 0.5)
-                .OrderBy(row => row.Wins * 1.0 / row.Games)
-                .ThenByDescending(row => row.Games)
-                .FirstOrDefault();
-            if (worstOpponent is not null)
-            {
-                var winRate = Math.Round(worstOpponent.Wins * 100.0 / worstOpponent.Games);
-                banLines.Add(
-                    $"💀 **{EscapeMarkdown(worstOpponent.ChampionName)}** — 맞상대 승률 낮음 " +
-                    $"(상대 {worstOpponent.Games}판 중 우리 승률 {winRate}%)");
-                alreadyBanned.Add(worstOpponent.ChampionName);
-            }
-
-            // (2) 메타 티어 높은 챔프 — op.gg 수동 스냅샷 기준 (파일이 없거나 비어 있으면 자연스럽게 건너뜀).
-            var metaCandidate = metaSnapshot?.GetForPosition(pos)
-                .Where(entry => !alreadyBanned.Contains(entry.Champion))
-                .OrderBy(entry => GetTierRank(entry.Tier))
-                .ThenByDescending(entry => entry.WinRate)
-                .FirstOrDefault();
-            if (metaCandidate is not null)
-            {
-                banLines.Add(
-                    $"🔥 **{EscapeMarkdown(metaCandidate.Champion)}** — 메타 티어 {EscapeMarkdown(metaCandidate.Tier)} " +
-                    $"(op.gg 기준 승률 {metaCandidate.WinRate:0.#}%)");
-                alreadyBanned.Add(metaCandidate.Champion);
-            }
-
-            // (3) 우리 AZ 티어픽 상대 카운터 — 이 라인 베스트픽들이 잡았을 때 유독 승률이 안 나온 상대.
-            var ourTopPicks = sampledLineTierRows
-                .OrderByDescending(row => row.Wins * 1.0 / row.Games)
-                .ThenByDescending(row => row.Games)
-                .Take(perLineTakeCount)
-                .Select(row => row.ChampionName)
-                .ToList();
-            var matchupRows = await _matchRepository.GetMatchupStatsAsync(Context.Guild.Id, FlexQueueId, pos, ourTopPicks);
-            var matchupCandidate = matchupRows
-                .Where(row => row.Games >= 3 && row.Wins * 1.0 / row.Games < 0.5 && !alreadyBanned.Contains(row.ChampionName))
-                .OrderBy(row => row.Wins * 1.0 / row.Games)
-                .ThenByDescending(row => row.Games)
-                .FirstOrDefault();
-            if (matchupCandidate is not null)
-            {
-                var winRate = Math.Round(matchupCandidate.Wins * 100.0 / matchupCandidate.Games);
-                var severity = winRate <= 40 ? "🚨" : "⚠️";
-                banLines.Add(
-                    $"{severity} **{EscapeMarkdown(matchupCandidate.ChampionName)}** — 우리 베스트픽" +
-                    $"({string.Join("/", ourTopPicks.Select(EscapeMarkdown))}) 상대 승률 {winRate}% " +
-                    $"(표본 {matchupCandidate.Games}판, 작은 표본 주의)");
-            }
-
-            var banText = banLines.Count > 0
-                ? string.Join("\n", banLines)
+            var banText = line.Bans.Count > 0
+                ? string.Join("\n", line.Bans.Select(FormatBanLine))
                 : "표본 부족 또는 특이 밴 후보 없음";
 
-            embed.AddField($"{GetKoreanPosition(pos)} · 픽 추천 (Top 3)", pickText);
-            embed.AddField($"{GetKoreanPosition(pos)} · 밴 추천 (맞상대/메타/우리픽카운터)", banText);
+            embed.AddField($"{GetKoreanPosition(line.Position)} · 픽 추천 (Top 3)", pickText);
+            embed.AddField($"{GetKoreanPosition(line.Position)} · 밴 추천 (맞상대/메타/우리픽카운터)", banText);
         }
 
-        var metaFooterNote = metaSnapshot is null
+        var metaFooterNote = !recommendation.HasMetaSnapshot
             ? "메타 스냅샷 없음(Config/MetaTierSnapshot.json 참고)"
-            : $"메타 스냅샷 기준일 {metaSnapshot.UpdatedAt ?? "미기재"}";
+            : $"메타 스냅샷 기준일 {recommendation.MetaSnapshotUpdatedAt ?? "미기재"}";
 
         embed.WithFooter(
             $"자유 랭크 · 최소 {MinSampleSize}판 이상 기준(표본 부족 시 전체 표시) · " +
             $"{metaFooterNote} · 메타 티어/카운터는 op.gg를 참고해 사람이 채워넣은 값이라 실시간이 아닙니다.");
 
         await FollowupAsync(embed: embed.Build());
+
+        // 밴 후보 1개를 근거(Reason)에 맞는 문구로 그립니다 — 예전엔 이 3가지가 각각 인라인으로
+        // 흩어져 있었는데, 서비스 분리 후엔 여기 한 곳에 모여서 오히려 한눈에 비교하기 쉬워졌습니다.
+        static string FormatBanLine(BanPickBanCandidate ban) => ban.Reason switch
+        {
+            BanReasonKind.WorstOpponent =>
+                $"💀 **{EscapeMarkdown(ban.ChampionName)}** — 맞상대 승률 낮음 " +
+                $"(상대 {ban.Games}판 중 우리 승률 {Math.Round(ban.Wins * 100.0 / ban.Games)}%)",
+            BanReasonKind.MetaTier =>
+                $"🔥 **{EscapeMarkdown(ban.ChampionName)}** — 메타 티어 {EscapeMarkdown(ban.MetaTier ?? "?")} " +
+                $"(op.gg 기준 승률 {ban.MetaWinRate:0.#}%)",
+            BanReasonKind.OurPickCounter => FormatOurPickCounterBan(ban),
+            _ => EscapeMarkdown(ban.ChampionName),
+        };
+
+        static string FormatOurPickCounterBan(BanPickBanCandidate ban)
+        {
+            var winRate = Math.Round(ban.Wins * 100.0 / ban.Games);
+            var severity = winRate <= 40 ? "🚨" : "⚠️";
+            var contextNames = string.Join("/", (ban.OurTopPicks ?? []).Select(EscapeMarkdown));
+            return $"{severity} **{EscapeMarkdown(ban.ChampionName)}** — 우리 베스트픽({contextNames}) 상대 승률 {winRate}% " +
+                $"(표본 {ban.Games}판, 작은 표본 주의)";
+        }
     }
 
     [SlashCommand("승률순위", "등록된 AtoZ 멤버들의 자유 랭크 승률 순위를 보여줍니다.")]
@@ -1611,25 +1559,7 @@ public class ClanStatsModule : InteractionModuleBase<SocketInteractionContext>
         _ => "기타",
     };
 
-    // 밴픽추천의 메타 티어 후보 정렬용 — "S" > "A" > ... 순으로 좋은 티어가 먼저 오게 순위를 매깁니다.
-    // "S+"/"A-"처럼 접미사가 붙어도 첫 글자만 보고 판단합니다.
-    private static int GetTierRank(string tier)
-    {
-        if (string.IsNullOrEmpty(tier))
-        {
-            return 9;
-        }
-
-        return char.ToUpperInvariant(tier[0]) switch
-        {
-            'S' => 0,
-            'A' => 1,
-            'B' => 2,
-            'C' => 3,
-            'D' => 4,
-            _ => 9,
-        };
-    }
+    // GetTierRank는 2026-08-20 리팩토링 2단계에서 BanPickRecommendationService로 이관됨(사용처가 그 서비스뿐이었음).
 
     private static int GetPositionOrder(string position) => position switch
     {

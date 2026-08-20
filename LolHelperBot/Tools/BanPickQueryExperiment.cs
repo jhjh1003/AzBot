@@ -9,6 +9,10 @@
 // 2026-08-20 리팩토링 1단계: Services/에서 Tools/로 이동 + 네임스페이스를 LolHelperBot.Tools로 분리.
 // "실험"이라면서도 Program.cs 정식 진입점에 배선돼 있어 프로덕션 코드와 구분이 안 된다는 외부
 // 코드리뷰 지적에 따라, 위치와 이름부터 "이건 진짜 기능이 아니라 개발용 도구다"를 명확히 함.
+//
+// 2026-08-20 리팩토링 2단계: 위쪽 절반(우리 Top3/(1)/(3) 계산)은 원래 있던 원시 쿼리 로직 그대로
+// 두고, 아래에 BanPickRecommendationService(실제 /밴픽추천이 쓰는 서비스)의 결과도 같이 출력하도록
+// 추가함 — 서비스로 로직을 옮기면서 결과가 안 바뀌었는지 눈으로 바로 대조하기 위함(회귀 확인용).
 
 using LolHelperBot.Services;
 using static LolHelperBot.Services.ClanConstants;
@@ -20,6 +24,7 @@ public static class BanPickQueryExperiment
     public static async Task RunAsync(
         MatchRepository matchRepository,
         MetaTierRepository metaTierRepository,
+        BanPickRecommendationService banPickRecommendationService,
         ulong guildId,
         string? positionArg)
     {
@@ -70,6 +75,40 @@ public static class BanPickQueryExperiment
             foreach (var row in matchupRows.Where(r => r.Games >= 3).OrderBy(r => r.Wins * 1.0 / r.Games).Take(5))
             {
                 Console.WriteLine($"    - {row.ChampionName}: {row.Games}판 우리승률 {Math.Round(row.Wins * 100.0 / row.Games)}%");
+            }
+        }
+
+        Console.WriteLine("\n[회귀 확인] BanPickRecommendationService 결과 (위 원시 쿼리와 대조용):");
+        var recommendation = await banPickRecommendationService.BuildAsync(guildId, positionArg is null ? null : positionArg.ToUpperInvariant());
+        if (recommendation is null)
+        {
+            Console.WriteLine("  (데이터 없음)");
+            return;
+        }
+
+        foreach (var line in recommendation.Lines)
+        {
+            Console.WriteLine($"\n===== {line.Position} (서비스) =====");
+            if (!line.HasData)
+            {
+                Console.WriteLine("  (데이터 없음)");
+                continue;
+            }
+
+            Console.WriteLine("  픽 Top3: " + string.Join(", ", line.Picks.Select(p =>
+                $"{p.ChampionName}({p.Games}판 {Math.Round(p.Wins * 100.0 / p.Games)}%" +
+                (p.MetaCounters.Count > 0 ? $", 카운터:{string.Join("/", p.MetaCounters)}" : "") + ")")));
+
+            foreach (var ban in line.Bans)
+            {
+                var detail = ban.Reason switch
+                {
+                    BanReasonKind.WorstOpponent => $"{ban.ChampionName} ({ban.Games}판 {Math.Round(ban.Wins * 100.0 / ban.Games)}%)",
+                    BanReasonKind.MetaTier => $"{ban.ChampionName} (티어 {ban.MetaTier}, {ban.MetaWinRate:0.#}%)",
+                    BanReasonKind.OurPickCounter => $"{ban.ChampionName} ({ban.Games}판 {Math.Round(ban.Wins * 100.0 / ban.Games)}%, 우리픽:{string.Join("/", ban.OurTopPicks ?? [])})",
+                    _ => ban.ChampionName,
+                };
+                Console.WriteLine($"  밴[{ban.Reason}]: {detail}");
             }
         }
     }

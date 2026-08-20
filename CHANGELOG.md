@@ -43,6 +43,7 @@ LoL Helper Bot의 기능 추가/변경 내역을 버전별로 기록합니다.
   - 3차(30경기 재검증): 이번엔 원딜 63%(19/30) 1위 — 지표 개수가 적은 라인(원딜 4개)이 지표 많은 라인(탑 6개)보다 평균이 덜 흔들려서 계속 유리했던 것. 원딜 지표를 6개로 늘리고 탑/정글 가중치도 재조정했으나, 재검증 결과 여전히 원딜 47%·서폿 33% 대 정글 0%(30전 전패)의 편향이 남음 — 특정 지표를 확실히 독점하는 라인(원딜=딜량, 서폿=시야)이 유리하고, 정글처럼 한 지표도 확실히 독점 못 하는 "제너럴리스트" 라인은 계속 불리한 구조적 한계를 확인. `ContributionScoreWeights.txt`에 이 한계를 명시하고, "참고 지표로 활용, 완벽한 심판으로 맹신 금지"로 문서화함.
 
 ### 변경
+- **리팩토링 2단계 — `/밴픽추천` 계산 로직을 서비스 계층으로 분리(시범 1호).** 외부 코드리뷰의 "커맨드 핸들러가 필터링·집계·추천 로직까지 직접 수행한다" 지적에 따라, `ShowBanPickRecommendationAsync`(약 150줄)에 있던 쿼리·후보 선정·중복 제거 로직 전부를 새 `BanPickRecommendationService`(Discord 타입을 전혀 모르는 순수 데이터 계산)로 옮기고, 커맨드 핸들러는 "서비스 호출 → Embed로 그리기"만 담당하도록 축소. 리팩토링 전/후 결과가 같은지 `dotnet run -- banpick-test`에 서비스 결과 출력을 추가해서 원시 쿼리 결과와 나란히 대조 확인(라인별 픽 Top3·밴 3종 전부 동일 출력 확인됨). 앞으로 다른 커맨드(티어픽, 명예의전당 등)를 같은 패턴으로 옮길 때 이 파일을 템플릿으로 참고.
 - **리팩토링 1단계 — 상수/유틸 중복 제거 + 실험 코드 위치 정리.** 외부 코드리뷰에서 "매직 넘버 산재"·"중복 코드"·"실험 파일이 정식 진입점에 배선됨" 지적을 받고 정리함(가장 위험한 서비스 계층 추출·인터페이스 DI·테스트 프로젝트 도입은 이번엔 하지 않기로 함 — 서비스 하나 없는 소규모 클랜 봇 규모에서 과할 수 있어 보류, 다음 단계에서 필요성 재검토).
   - `FlexQueueId`(4곳)·`MinSampleSize`(2곳)·`RiotApiDelay`(2곳)가 파일마다 따로 하드코딩돼 있던 걸 `Services/ClanConstants.cs` 하나로 모으고, 각 파일은 `using static`으로 그대로 가져다 씀(호출부 코드는 안 바뀜, 값의 출처만 통일).
   - `TryParseRiotId`(3곳 복붙), `EscapeMarkdown`(2곳 복붙), `CanManageMembers`(2곳 복붙)를 각각 `Services/RiotIdParser.cs`·`MarkdownFormatter.cs`·`PermissionChecker.cs`로 이관(`CanManageMembers`는 `SocketInteractionContext` 확장 메서드로 전환 — 호출부는 `CanManageMembers()` → `Context.CanManageMembers()`로만 변경).
