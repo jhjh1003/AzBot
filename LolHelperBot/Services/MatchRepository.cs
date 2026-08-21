@@ -950,22 +950,33 @@ public class MatchRepository
         ulong guildId,
         int queueId,
         ulong discordUserId,
+        DateTimeOffset? fromUtc = null,
+        DateTimeOffset? toUtc = null,
         CancellationToken cancellationToken = default)
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
+        var dateFilter = fromUtc is not null && toUtc is not null
+            ? "AND game_created_at_utc >= $start AND game_created_at_utc < $end"
+            : "";
+
         var command = connection.CreateCommand();
-        command.CommandText = """
+        command.CommandText = $"""
             SELECT team_position, COUNT(*) AS games, SUM(win) AS wins
             FROM match_participations
-            WHERE guild_id = $guildId AND queue_id = $queueId AND discord_user_id = $discordUserId
+            WHERE guild_id = $guildId AND queue_id = $queueId AND discord_user_id = $discordUserId {dateFilter}
             GROUP BY team_position
             ORDER BY games DESC;
             """;
         command.Parameters.AddWithValue("$guildId", guildId.ToString());
         command.Parameters.AddWithValue("$queueId", queueId);
         command.Parameters.AddWithValue("$discordUserId", discordUserId.ToString());
+        if (fromUtc is not null && toUtc is not null)
+        {
+            command.Parameters.AddWithValue("$start", fromUtc.Value.UtcDateTime.ToString("O"));
+            command.Parameters.AddWithValue("$end", toUtc.Value.UtcDateTime.ToString("O"));
+        }
 
         var results = new List<MemberPositionStatRow>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -987,21 +998,32 @@ public class MatchRepository
         ulong guildId,
         int queueId,
         ulong discordUserId,
+        DateTimeOffset? fromUtc = null,
+        DateTimeOffset? toUtc = null,
         CancellationToken cancellationToken = default)
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
+        var dateFilter = fromUtc is not null && toUtc is not null
+            ? "AND game_created_at_utc >= $start AND game_created_at_utc < $end"
+            : "";
+
         var command = connection.CreateCommand();
-        command.CommandText = """
+        command.CommandText = $"""
             SELECT champion_name, COUNT(*) AS games, SUM(win) AS wins
             FROM match_participations
-            WHERE guild_id = $guildId AND queue_id = $queueId AND discord_user_id = $discordUserId
+            WHERE guild_id = $guildId AND queue_id = $queueId AND discord_user_id = $discordUserId {dateFilter}
             GROUP BY champion_name;
             """;
         command.Parameters.AddWithValue("$guildId", guildId.ToString());
         command.Parameters.AddWithValue("$queueId", queueId);
         command.Parameters.AddWithValue("$discordUserId", discordUserId.ToString());
+        if (fromUtc is not null && toUtc is not null)
+        {
+            command.Parameters.AddWithValue("$start", fromUtc.Value.UtcDateTime.ToString("O"));
+            command.Parameters.AddWithValue("$end", toUtc.Value.UtcDateTime.ToString("O"));
+        }
 
         var results = new List<MemberChampionStatRow>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -1023,21 +1045,32 @@ public class MatchRepository
         ulong guildId,
         int queueId,
         ulong discordUserId,
+        DateTimeOffset? fromUtc = null,
+        DateTimeOffset? toUtc = null,
         CancellationToken cancellationToken = default)
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
+        var dateFilter = fromUtc is not null && toUtc is not null
+            ? "AND game_created_at_utc >= $start AND game_created_at_utc < $end"
+            : "";
+
         var command = connection.CreateCommand();
-        command.CommandText = """
+        command.CommandText = $"""
             SELECT team_position, champion_name, COUNT(*) AS games, SUM(win) AS wins
             FROM match_participations
-            WHERE guild_id = $guildId AND queue_id = $queueId AND discord_user_id = $discordUserId
+            WHERE guild_id = $guildId AND queue_id = $queueId AND discord_user_id = $discordUserId {dateFilter}
             GROUP BY team_position, champion_name;
             """;
         command.Parameters.AddWithValue("$guildId", guildId.ToString());
         command.Parameters.AddWithValue("$queueId", queueId);
         command.Parameters.AddWithValue("$discordUserId", discordUserId.ToString());
+        if (fromUtc is not null && toUtc is not null)
+        {
+            command.Parameters.AddWithValue("$start", fromUtc.Value.UtcDateTime.ToString("O"));
+            command.Parameters.AddWithValue("$end", toUtc.Value.UtcDateTime.ToString("O"));
+        }
 
         var results = new List<MemberPositionChampionStatRow>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

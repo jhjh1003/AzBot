@@ -1054,7 +1054,9 @@ public partial class AtoZModule
         [SlashCommand("내전적", "우리 클랜 데이터 기준 자유 랭크 총 승률·라인별 승률·모스트/워스트 챔피언을 보여줍니다.", true)]
         public async Task ShowMyClanStatsAsync(
             [Summary("멤버", "확인할 AtoZ 멤버. 생략하면 명령을 실행한 본인")]
-        IUser? member = null)
+        IUser? member = null,
+            [Summary("월", "이번 해 월(또는 월 범위) 필터. 예: 8(8월만), 8~8(8월만), 6~8(6~8월). 생략하면 전체 기간 통합")]
+        string? 월 = null)
         {
             await DeferAsync();
 
@@ -1064,19 +1066,45 @@ public partial class AtoZModule
                 return;
             }
 
+            DateTimeOffset? rangeStartUtc = null;
+            DateTimeOffset? rangeEndUtc = null;
+            string periodLabel = "전체 기간(통합)";
+
+            if (!string.IsNullOrWhiteSpace(월))
+            {
+                if (!TryParseMonthRange(월, out var startMonth, out var endMonth))
+                {
+                    await FollowupAsync("월 형식이 올바르지 않습니다. `8`(8월만), `8~8`, `6~8`처럼 입력해 주세요(1~12, 시작<=끝).");
+                    return;
+                }
+
+                var nowKst = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(9));
+                var rangeStartKst = new DateTimeOffset(nowKst.Year, startMonth, 1, 0, 0, 0, TimeSpan.FromHours(9));
+                var rangeEndKst = new DateTimeOffset(nowKst.Year, endMonth, 1, 0, 0, 0, TimeSpan.FromHours(9)).AddMonths(1);
+                rangeStartUtc = rangeStartKst.ToUniversalTime();
+                rangeEndUtc = rangeEndKst.ToUniversalTime();
+                periodLabel = startMonth == endMonth
+                    ? $"{nowKst.Year}년 {startMonth}월"
+                    : $"{nowKst.Year}년 {startMonth}월~{endMonth}월";
+            }
+
             var targetMember = member ?? Context.User;
 
-            var positionRows = await _matchRepository.GetMemberPositionStatsAsync(Context.Guild.Id, FlexQueueId, targetMember.Id);
+            var positionRows = await _matchRepository.GetMemberPositionStatsAsync(
+                Context.Guild.Id, FlexQueueId, targetMember.Id, rangeStartUtc, rangeEndUtc);
             if (positionRows.Count == 0)
             {
                 var who = targetMember.Id == Context.User.Id ? "본인의" : "해당 멤버의";
+                var periodNote = rangeStartUtc is null ? "" : $" ({periodLabel} 기준)";
                 await FollowupAsync(
-                    $"{who} 저장된 자유 랭크 전적이 없습니다. AtoZ 등록 여부와 `/atoz 전적수집` 실행 여부를 확인해 주세요.");
+                    $"{who} 저장된 자유 랭크 전적이 없습니다{periodNote}. AtoZ 등록 여부와 `/atoz 전적수집` 실행 여부를 확인해 주세요.");
                 return;
             }
 
-            var championRows = await _matchRepository.GetMemberChampionStatsAsync(Context.Guild.Id, FlexQueueId, targetMember.Id);
-            var positionChampionRows = await _matchRepository.GetMemberChampionStatsByPositionAsync(Context.Guild.Id, FlexQueueId, targetMember.Id);
+            var championRows = await _matchRepository.GetMemberChampionStatsAsync(
+                Context.Guild.Id, FlexQueueId, targetMember.Id, rangeStartUtc, rangeEndUtc);
+            var positionChampionRows = await _matchRepository.GetMemberChampionStatsByPositionAsync(
+                Context.Guild.Id, FlexQueueId, targetMember.Id, rangeStartUtc, rangeEndUtc);
 
             var totalGames = positionRows.Sum(row => row.Games);
             var totalWins = positionRows.Sum(row => row.Wins);
@@ -1139,7 +1167,7 @@ public partial class AtoZModule
                 : "승률 50% 미만인 챔피언이 없습니다 👍";
 
             var embed = new EmbedBuilder()
-                .WithTitle($"{EscapeMarkdown(displayName)}의 AtoZ 자유 랭크 전적")
+                .WithTitle($"{EscapeMarkdown(displayName)}의 AtoZ 자유 랭크 전적 ({periodLabel})")
                 .WithColor(totalWins * 2 >= totalGames ? Color.Green : Color.Red)
                 .AddField("총 승률", $"**{totalGames}판 {totalWins}승** · 승률 **{totalWinRate:F0}%**")
                 .AddField("라인별 승률", string.Join("\n\n", positionLines))
@@ -1565,6 +1593,25 @@ public partial class AtoZModule
             year = int.Parse(match.Groups[1].Value);
             month = int.Parse(match.Groups[2].Value);
             return month is >= 1 and <= 12;
+        }
+
+        /// <summary>
+        /// /내전적의 "월" 필터 파싱 — "8"(8월만), "8~8"(8월만), "6~8"(6~8월) 형식. 연도는 안 받고
+        /// 항상 이번 해(KST 기준)로 고정합니다. startMonth/endMonth 둘 다 1~12, start&lt;=end.
+        /// </summary>
+        private static bool TryParseMonthRange(string input, out int startMonth, out int endMonth)
+        {
+            startMonth = 0;
+            endMonth = 0;
+            var match = Regex.Match(input.Trim(), @"^(\d{1,2})\s*(?:~\s*(\d{1,2}))?$");
+            if (!match.Success)
+            {
+                return false;
+            }
+
+            startMonth = int.Parse(match.Groups[1].Value);
+            endMonth = match.Groups[2].Success ? int.Parse(match.Groups[2].Value) : startMonth;
+            return startMonth is >= 1 and <= 12 && endMonth is >= 1 and <= 12 && startMonth <= endMonth;
         }
 
         /// <summary>
