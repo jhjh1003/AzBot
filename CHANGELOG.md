@@ -6,6 +6,14 @@ LoL Helper Bot의 기능 추가/변경 내역을 버전별로 기록합니다.
 
 **아직 구현 안 한 아이디어/2단계 업그레이드는 여기 말고 [AfterUpgrade.md](AfterUpgrade.md)에서 관리합니다.** 이 파일은 "이미 배포된 것"만 남겨두는 곳입니다.
 
+## [0.7.0] - 2026-08-21
+
+### 변경
+
+- **기여도 점수 v4.0.0을 `/아재전적`·`/명예의전당`에 정식 적용.** "15분 라인전/후반 분리 + 팀 승리 플랜 기준" 가중치([ContributionScoreWeightsV4.txt](LolHelperBot/Config/ContributionScoreWeightsV4.txt))로 계산하며, 신규 지표(경험치·라인솔로킬·오브젝트 몬스터종류 보너스·힐+보호막·다른라인기여도/로밍 근사)까지 반영. 새 서비스 `ContributionScoreCalculatorV4`가 계산하고, 결과는 새 테이블 `match_contribution_v4`(guild_id, match_id, discord_user_id, early_score, late_score, final_score)에 미리 저장해서 명령 실행 때마다 재계산하지 않음. **2026-08 매치 49건만 백필**(`dotnet run -- v4-backfill 2026-08`) — 백필 안 된 경기는 자동으로 v3(전체 게임 기준)로 폴백. `/전적수집`은 아직 안 건드려서, 앞으로 새로 수집되는 경기는 v4-backfill을 다시 돌려야 점수가 채워짐(다음 단계 — AfterUpgrade.md 참고).
+- `/아재전적` UI: 라인 아이콘 변경(탑 🛡️→🪓, 서폿 ⚜️→🛡️).
+- 콘솔 실험 도구(`timeline-raw`, `v4-test` 등) 결과가 한글 로그 리다이렉트 시 깨지던 문제 — `Console.OutputEncoding`을 UTF-8로 고정.
+
 ## [0.6.0] - 2026-08-21
 
 ### 변경

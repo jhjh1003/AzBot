@@ -164,6 +164,112 @@ public class MatchRepository
             );
             """;
         await conflictCommand.ExecuteNonQueryAsync(cancellationToken);
+
+        // 기여도 점수 v4.0.0(15분 라인전/후반, 팀 승리 플랜 기준) — Timeline API로 미리 계산해둔
+        // 최종 점수만 저장합니다(원자료 40여 컬럼 대신 계산 끝난 점수만 — ContributionScoreCalculatorV4
+        // 참고). 2026-08-21, v4-backfill 명령으로 8월 매치부터 채움. 이 테이블에 없는 매치는
+        // ShowAjaeMatchesAsync/ShowHonorBoardAsync가 v3로 자동 폴백합니다.
+        var v4Command = connection.CreateCommand();
+        v4Command.CommandText = """
+            CREATE TABLE IF NOT EXISTS match_contribution_v4 (
+                guild_id TEXT NOT NULL,
+                match_id TEXT NOT NULL,
+                discord_user_id TEXT NOT NULL,
+                early_score REAL NOT NULL,
+                late_score REAL NOT NULL,
+                final_score REAL NOT NULL,
+                computed_at_utc TEXT NOT NULL,
+                PRIMARY KEY (guild_id, match_id, discord_user_id)
+            );
+            """;
+        await v4Command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// 기여도 점수 v4.0.0 — 매치 하나의 참가자별 최종 점수(봇듀오 블렌드까지 적용됨)를 저장합니다.
+    /// 이미 있으면 덮어씁니다(가중치 파일을 튜닝하고 재계산할 수 있게).
+    /// </summary>
+    public async Task UpsertContributionV4Async(
+        ulong guildId,
+        string matchId,
+        IReadOnlyList<(ulong DiscordUserId, double EarlyScore, double LateScore, double FinalScore)> scores,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction();
+
+        foreach (var (discordUserId, earlyScore, lateScore, finalScore) in scores)
+        {
+            var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO match_contribution_v4
+                    (guild_id, match_id, discord_user_id, early_score, late_score, final_score, computed_at_utc)
+                VALUES
+                    ($guildId, $matchId, $discordUserId, $earlyScore, $lateScore, $finalScore, $computedAt)
+                ON CONFLICT (guild_id, match_id, discord_user_id) DO UPDATE SET
+                    early_score = excluded.early_score,
+                    late_score = excluded.late_score,
+                    final_score = excluded.final_score,
+                    computed_at_utc = excluded.computed_at_utc;
+                """;
+            command.Parameters.AddWithValue("$guildId", guildId.ToString());
+            command.Parameters.AddWithValue("$matchId", matchId);
+            command.Parameters.AddWithValue("$discordUserId", discordUserId.ToString());
+            command.Parameters.AddWithValue("$earlyScore", earlyScore);
+            command.Parameters.AddWithValue("$lateScore", lateScore);
+            command.Parameters.AddWithValue("$finalScore", finalScore);
+            command.Parameters.AddWithValue("$computedAt", DateTimeOffset.UtcNow.ToString("o"));
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// 기여도 점수 v4.0.0 — 여러 매치의 참가자별 최종 점수를 한 번에 읽어옵니다(N+1 쿼리 방지).
+    /// 반환 키는 (match_id, discord_user_id)이고, 이 테이블에 없는 매치는 결과에서 그냥 빠집니다
+    /// (호출부가 v3로 폴백해야 함).
+    /// </summary>
+    public async Task<IReadOnlyDictionary<(string MatchId, ulong DiscordUserId), double>> GetContributionV4ScoresAsync(
+        ulong guildId,
+        IReadOnlyCollection<string> matchIds,
+        CancellationToken cancellationToken = default)
+    {
+        var result = new Dictionary<(string, ulong), double>();
+        if (matchIds.Count == 0)
+        {
+            return result;
+        }
+
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        var placeholders = string.Join(",", matchIds.Select((_, i) => $"$m{i}"));
+        var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT match_id, discord_user_id, final_score
+            FROM match_contribution_v4
+            WHERE guild_id = $guildId AND match_id IN ({placeholders});
+            """;
+        command.Parameters.AddWithValue("$guildId", guildId.ToString());
+        var matchIdList = matchIds.ToList();
+        for (var i = 0; i < matchIdList.Count; i++)
+        {
+            command.Parameters.AddWithValue($"$m{i}", matchIdList[i]);
+        }
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var matchId = reader.GetString(0);
+            var discordUserId = ulong.Parse(reader.GetString(1));
+            var finalScore = reader.GetDouble(2);
+            result[(matchId, discordUserId)] = finalScore;
+        }
+
+        return result;
     }
 
     /// <summary>

@@ -13,6 +13,11 @@ using LolHelperBot.Tools;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
+// Windows 콘솔 기본 코드페이지(CP949)로는 한글 로그가 깨져서 콘솔 실험 도구(timeline-raw 등)
+// 결과를 파일로 리다이렉트했을 때 못 읽는 문제가 있었음 — UTF-8로 고정. Discord 자체 통신에는
+// 영향 없음(Discord.Net은 별도로 UTF-8 사용).
+Console.OutputEncoding = System.Text.Encoding.UTF8;
+
 var configuration = new ConfigurationBuilder()
     .SetBasePath(AppContext.BaseDirectory)
     .AddJsonFile("appsettings.json", optional: true, reloadOnChange: false)
@@ -103,6 +108,36 @@ if (args.Length > 0 && args[0] == "timeline-test")
 {
     var timelineTestCount = args.Length > 1 && int.TryParse(args[1], out var parsedCount) ? parsedCount : 10;
     await TimelineExperiment.RunAsync(riotApiClient, matchRepository, guildId, timelineTestCount);
+    return;
+}
+
+// 기여도 점수 v4(15분 라인전/후반 분리) 검증용 1회성 실험: `dotnet run -- v4-test [매치수]`
+if (args.Length > 0 && args[0] == "v4-test")
+{
+    var v4TestCount = args.Length > 1 && int.TryParse(args[1], out var parsedV4Count) ? parsedV4Count : 4;
+    await ContributionScoreV4Experiment.RunAsync(riotApiClient, matchRepository, guildId, v4TestCount);
+    return;
+}
+
+// 기여도 v4.0.0 백필: `dotnet run -- v4-backfill [연월]` (생략하면 이번 달)
+if (args.Length > 0 && args[0] == "v4-backfill")
+{
+    var backfillYearMonth = args.Length > 1 ? args[1] : null;
+    await ContributionV4Backfill.RunAsync(riotApiClient, matchRepository, guildId, backfillYearMonth);
+    return;
+}
+
+// 케이틀린 빌드별 승률 1회성 조회: `dotnet run -- caitlyn-build <닉네임일부>`
+if (args.Length > 1 && args[0] == "caitlyn-build")
+{
+    await CaitlynBuildExperiment.RunAsync(riotApiKey ?? string.Empty, riotAccountRegion, memberRepository.DatabasePath, args[1]);
+    return;
+}
+
+// 픽창 선픽/후픽 순서 확인용 1회성 실험: `dotnet run -- match-raw <matchId>`
+if (args.Length > 1 && args[0] == "match-raw")
+{
+    await MatchRawDumpExperiment.RunAsync(riotApiKey ?? string.Empty, riotAccountRegion, args[1]);
     return;
 }
 

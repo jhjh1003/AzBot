@@ -66,5 +66,44 @@ public static class TimelineRawDumpExperiment
         {
             Console.WriteLine($"  - {type}");
         }
+
+        // 정글 체류시간/갱 분석 가능 여부 확인용(2026-08-21) — CHAMPION_KILL 이벤트에 위치(x,y)가
+        // 있는지, 그리고 participantFrame에 매 분 위치가 있는지 직접 찍어봅니다.
+        Console.WriteLine("\n===== CHAMPION_KILL 이벤트 샘플(위치 포함 여부 확인) =====");
+        var sampleKill = frames.EnumerateArray()
+            .SelectMany(f => f.TryGetProperty("events", out var evts) ? evts.EnumerateArray() : [])
+            .FirstOrDefault(e => e.TryGetProperty("type", out var t) && t.GetString() == "CHAMPION_KILL");
+        if (sampleKill.ValueKind != JsonValueKind.Undefined)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(sampleKill, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        else
+        {
+            Console.WriteLine("  (이 매치엔 CHAMPION_KILL 이벤트가 없음)");
+        }
+
+        // v4.0.0 "오브젝트 골드환산" 스펙 검증용(2026-08-21) — 드래곤/바론/유충/전령 구분(monsterType)이
+        // 이벤트에 있는지 확인.
+        Console.WriteLine("\n===== ELITE_MONSTER_KILL 이벤트 전체(오브젝트 종류 구분 필드 확인) =====");
+        var monsterKills = frames.EnumerateArray()
+            .SelectMany(f => f.TryGetProperty("events", out var evts) ? evts.EnumerateArray() : [])
+            .Where(e => e.TryGetProperty("type", out var t) && t.GetString() == "ELITE_MONSTER_KILL")
+            .ToList();
+        foreach (var mk in monsterKills.Take(5))
+        {
+            Console.WriteLine(JsonSerializer.Serialize(mk, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        Console.WriteLine($"(총 {monsterKills.Count}건 중 5건만 표시)");
+
+        Console.WriteLine("\n===== 전체 참가자 1의 매 프레임 position 궤적(분 단위) =====");
+        foreach (var frame in frames.EnumerateArray())
+        {
+            var ts = frame.GetProperty("timestamp").GetInt64() / 60000;
+            if (frame.GetProperty("participantFrames").TryGetProperty("1", out var pf) &&
+                pf.TryGetProperty("position", out var pos))
+            {
+                Console.WriteLine($"  {ts}분: x={pos.GetProperty("x").GetInt32()}, y={pos.GetProperty("y").GetInt32()}");
+            }
+        }
     }
 }

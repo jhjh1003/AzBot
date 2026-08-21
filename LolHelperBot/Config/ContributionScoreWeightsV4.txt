@@ -1,0 +1,159 @@
+# ============================================================
+# 기여도 점수 v4.0.0(260821) — 15분 라인전 / 15분 이후 후반, "팀 승리 플랜" 기준 재설계
+# ============================================================
+#
+# 이 파일은 아직 실제 명령어(/아재전적, /명예의전당)에 연결되지 않은 "실험용" 가중치입니다.
+# ContributionScoreV4Experiment(`dotnet run -- v4-test <매치수>`)에서만 읽습니다.
+#
+# v3.0(2026-08-19 스펙, "라인전/후반 중요도 순서")을 대체하는 v4.0.0(2026-08-21 스펙, "팀 승리
+# 플랜 기준")입니다 — 단순히 라인 성과 비교가 아니라 "이 라인이 팀 승리에 필요한 역할을 했는가"를
+# 기준으로 지표를 다시 골랐습니다. *가 붙은 지표는 원본 메모에서 "승리 요인에 더 중요하다"고
+# 표시한 것 — 일반 지표(가중치 1.0)보다 1.4배 가중치를 줬습니다(임의로 정한 배율이니 결과 보고
+# 튜닝 가능).
+#
+# ------------------------------------------------------------
+# 원본 스펙(2026-08-21 사용자 메모, 그대로 옮김) — 지표 해석/구현 결정 사항은 각 섹션 위 주석 참고
+# ------------------------------------------------------------
+# 첫15분 팀 승리 플랜 기준(1차 확정)
+#   탑 : 내가 잘큰다, 라인터트린다, 다른라인에 영향을 끼친다
+#     지표 : *경험치, CS, *라인솔로킬, 골드수급(CS+킬), KDA, 와드점수
+#   정글 : 정글링 잘한다, 라인갱가서 성공(우리라인 골드 이득), 시야작업, 오브젝트를 먹는다
+#     지표 : *CS, 골드, 경험치, *KDA(갱관여-골드스윙기여도), *오브젝트
+#   미드 : 내가 잘큰다, 라인터트린다, 미드 주도권으로 오브젝트or라인영향력
+#     지표 : CS, 골드, 경험치, *라인솔로킬, KDA, *다른라인기여도
+#   봇듀오는 첫15분 듀오 0.3 + 내능력 0.7 로 환산(코드에서 별도 블렌드, 이 파일엔 각자 지표만)
+#   원딜 : 사고(데스) 안나고, CS차이 벌리고, 서폿과 킬/라인전으로 서폿 턴 제공
+#     지표 : CS, *골드, 경험치, KDA(적은 데스)
+#   서폿 : 잘 큰다, 원딜 CS차이 벌려줌, 덜 죽고 많이 죽임, 시야(정글 위치 파악)
+#     지표 : 경험치, 시야점수, 골드, *KDA(CC로 킬캐치 +점수), *로밍
+# 15분 이후 팀 승리 플랜(1차확정)
+#   탑: 오브젝트, 골드, 경험치, *딜량(받은피해량+군중제어), KDA
+#   정글: *오브젝트, 골드, 시야, 딜량(받은피해량+군중제어), KDA
+#   미드: 오브젝트, 골드, *딜0.7+군중제어0.3(딜량/군중제어 복합), KDA
+#   원딜: 오브젝트, 골드, *딜량, *KDA(적은 데스)
+#   서폿: 오브젝트, 골드, *시야, 군중제어/받은피해량/딜량/힐-보호막량 각 0.25(복합), KDA
+#
+# ------------------------------------------------------------
+# 사용자와 확인해서 정한 해석/구현 방침 4가지
+# ------------------------------------------------------------
+# 1. 오브젝트 점수화: "몬스터 종류별 골드환산표"까지는 안 만들고, 기존 damage_to_objectives(누적
+#    딜량, 팀 전체 관여도를 이미 잘 반영)를 메인으로 쓰고, 막타 친 사람에게만 monsterType별
+#    보너스(드래곤/바론/전령/유충)를 얹는 간단한 방식으로 감(오브젝트 킬 이벤트엔 킬러만 있고
+#    어시스트 목록이 없어서, 팀 관여도는 damage_to_objectives가 더 정확함).
+# 2. 로밍/라인이탈 판정: "30초 이상 이탈"은 데이터 해상도(1분 스냅샷) 밖이라 "1분 스냅샷 기준
+#    자기 라인 구역 밖에 있었다"로 근사. (참고: 라인 구역 자체도 정확한 타워 좌표가 아니라 맵을
+#    대각선으로 3등분하는 근사 경계라서, 로밍/다른라인기여도 지표는 참고용 근사치입니다.)
+# 3. 봇듀오 0.7/0.3 블렌드: 파트너 점수는 "블렌드 적용 전 순수 개인 점수"를 씀(순환 참조 방지).
+#    최종 원딜 점수 = 원딜 개인점수×0.7 + 서폿 개인점수×0.3, 서폿도 대칭으로 동일.
+# 4. 탑/미드 "골드수급(CS+킬, 중복 방지)": gold_earned(전체 획득 골드, CS+킬+아이템 판매 다 포함)를
+#    그 지표로 쓰고, creep_score는 "순수 CS 개수"(파밍 효율)로 별도 유지. 가중치 합이 과하지 않게
+#    각각 1.0으로 잡음(둘 다 최상위 가중치는 아님).
+#
+# ------------------------------------------------------------
+# 구현 상태(중요 — 전부 코드로 계산 가능한 건 아직 아님)
+# ------------------------------------------------------------
+# 아래 지표는 전부 이 파일에 반영했지만, 실제로 ContributionScoreV4Experiment가 계산할 수 있는
+# 것과 아직 코드가 없는 것이 섞여 있습니다:
+#   ✅ 계산 가능(기존 v3 실험 코드 재료 그대로): gold_earned, creep_score, kda, vision_score,
+#      damage_dealt, damage_taken, cc_time, damage_to_objectives, wards_placed
+#   🔧 코드 추가 필요(작음): xp(경험치 — 프레임에 이미 있음, Advantage만 추가), solo_kill(라인
+#      솔로킬 — 킬 이벤트 필터만 추가), 듀오 0.7/0.3 블렌드, monsterType 오브젝트 보너스,
+#      heal_and_shield(힐+보호막 — totalDamageShieldedOnTeammates 신규 캡처 필요)
+#   🔧 코드 추가 필요(큼, 근사치라 검증 필요): other_lane_impact(미드 다른라인기여도), roaming
+#      (서폿 로밍) — 맵 좌표 존 분류기 필요
+#   ⏸ 이번엔 단순화: gank_gold_swing(정글 갱관여-골드스윙기여도) — 정식 버전은 "갱 컨택 감지 +
+#      전후 골드차 추적" 서브시스템이 필요해서 다음 단계로 미루고, 이번엔 기존 kill_participation
+#      가중치를 올리는 걸로 대체(갱 가서 킬/어시 관여한 것 자체는 잡히지만, 킬 없이 골드 이득만
+#      만든 갱은 아직 credit 안 됨).
+#
+# ============================================================
+
+# ---------- EARLY_TOP: 경험치*, CS, 라인솔로킬*, 골드수급, KDA, 와드점수 ----------
+# (v3.0에 있던 damage_dealt/damage_taken/kill_participation은 이번 스펙에 없어서 뺐음 —
+# 2026-08-21 30경기 진단에서 탑 킬관여율이 다른 라인보다 구조적으로 낮게 나온 것과도 맞물림)
+EARLY_TOP.xp = 1.4
+EARLY_TOP.creep_score = 1.0
+EARLY_TOP.solo_kill = 1.4
+EARLY_TOP.gold_earned = 1.0
+EARLY_TOP.kda = 1.0
+EARLY_TOP.wards_placed = 1.0
+
+# ---------- EARLY_JUNGLE: CS*, 골드, 경험치, KDA*(갱관여), 오브젝트* ----------
+# vision_score는 원본 메모 "시야작업" 언급은 있는데 지표 목록엔 빠져있어서, 기본 가중치(1.0,
+# 별표 없음)로 그냥 넣어뒀습니다 — 의도와 다르면 빼거나 조정해주세요.
+EARLY_JUNGLE.creep_score = 1.4
+EARLY_JUNGLE.gold_earned = 1.0
+EARLY_JUNGLE.xp = 1.0
+EARLY_JUNGLE.kda = 1.4
+EARLY_JUNGLE.damage_to_objectives = 1.4
+EARLY_JUNGLE.objective_kill_bonus = 0.5
+EARLY_JUNGLE.vision_score = 1.0
+
+# ---------- EARLY_MIDDLE: CS, 골드, 경험치, 라인솔로킬*, KDA, 다른라인기여도* ----------
+EARLY_MIDDLE.creep_score = 1.0
+EARLY_MIDDLE.gold_earned = 1.0
+EARLY_MIDDLE.xp = 1.0
+EARLY_MIDDLE.solo_kill = 1.4
+EARLY_MIDDLE.kda = 1.0
+EARLY_MIDDLE.other_lane_impact = 1.4
+
+# ---------- EARLY_BOTTOM: CS, 골드*, 경험치, KDA(적은 데스는 KDA 공식에 이미 반영됨) ----------
+# 최종 점수는 코드에서 이 개인점수×0.7 + 서폿 개인점수×0.3으로 블렌드됩니다.
+EARLY_BOTTOM.creep_score = 1.0
+EARLY_BOTTOM.gold_earned = 1.4
+EARLY_BOTTOM.xp = 1.0
+EARLY_BOTTOM.kda = 1.0
+
+# ---------- EARLY_UTILITY: 경험치, 시야점수, 골드, KDA*(CC킬캐치), 로밍* ----------
+# 최종 점수는 코드에서 이 개인점수×0.7 + 원딜 개인점수×0.3으로 블렌드됩니다.
+# "CC로 킬캐치"는 인과관계 태그가 없어 일반 KDA에 녹여서 근사(별도 cc_time 지표 없음 — 원본
+# 지표 목록에도 없었음).
+EARLY_UTILITY.xp = 1.0
+EARLY_UTILITY.vision_score = 1.0
+EARLY_UTILITY.gold_earned = 1.0
+EARLY_UTILITY.kda = 1.4
+EARLY_UTILITY.roaming = 1.4
+
+# ---------- LATE_TOP: 오브젝트, 골드, 경험치, 딜량*(받은피해+CC 동급), KDA ----------
+LATE_TOP.damage_to_objectives = 1.0
+LATE_TOP.gold_earned = 1.0
+LATE_TOP.xp = 1.0
+LATE_TOP.damage_taken = 1.4
+LATE_TOP.cc_time = 1.4
+LATE_TOP.kda = 1.0
+
+# ---------- LATE_JUNGLE: 오브젝트*, 골드, 시야, 딜량(받은피해+CC 동급), KDA ----------
+LATE_JUNGLE.damage_to_objectives = 1.4
+LATE_JUNGLE.objective_kill_bonus = 0.5
+LATE_JUNGLE.gold_earned = 1.0
+LATE_JUNGLE.vision_score = 1.0
+LATE_JUNGLE.damage_taken = 1.0
+LATE_JUNGLE.cc_time = 1.0
+LATE_JUNGLE.kda = 1.0
+
+# ---------- LATE_MIDDLE: 오브젝트, 골드, 딜/CC복합*(딜0.7:CC0.3), KDA ----------
+# "괄호안을 1로 치고 딜0.7/CC0.3"을 별표(1.4배) 총합에 그 비율로 나눠 담음: 1.4*0.7=0.98→1.0,
+# 1.4*0.3=0.42→0.4
+LATE_MIDDLE.damage_to_objectives = 1.0
+LATE_MIDDLE.gold_earned = 1.0
+LATE_MIDDLE.damage_dealt = 1.0
+LATE_MIDDLE.cc_time = 0.4
+LATE_MIDDLE.kda = 1.0
+
+# ---------- LATE_BOTTOM: 오브젝트, 골드, 딜량*, KDA*(적은 데스) ----------
+LATE_BOTTOM.damage_to_objectives = 1.0
+LATE_BOTTOM.gold_earned = 1.0
+LATE_BOTTOM.damage_dealt = 1.4
+LATE_BOTTOM.kda = 1.4
+
+# ---------- LATE_UTILITY: 오브젝트, 골드, 시야*, (CC/받은피해/딜량/힐+보호막) 각 0.25, KDA ----------
+# heal_and_shield는 heal_amount(아군 힐량) + totalDamageShieldedOnTeammates(보호막량) 합산 —
+# 신규 캡처 필요(구현 상태 섹션 참고).
+LATE_UTILITY.damage_to_objectives = 1.0
+LATE_UTILITY.gold_earned = 1.0
+LATE_UTILITY.vision_score = 1.4
+LATE_UTILITY.cc_time = 0.25
+LATE_UTILITY.damage_taken = 0.25
+LATE_UTILITY.damage_dealt = 0.25
+LATE_UTILITY.heal_and_shield = 0.25
+LATE_UTILITY.kda = 1.0

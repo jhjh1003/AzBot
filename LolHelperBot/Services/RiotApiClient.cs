@@ -249,7 +249,8 @@ public class RiotApiClient
                     participant.TimeCCingOthers,
                     participant.TotalHealsOnTeammates,
                     participant.WardsPlaced,
-                    participant.DamageDealtToObjectives))
+                    participant.DamageDealtToObjectives,
+                    participant.DamageShieldedOnTeammates))
                 .ToList();
 
             return FullMatchResult.Success(new FullMatchDetail(
@@ -308,11 +309,17 @@ public class RiotApiClient
                                 pair.Value.ParticipantId,
                                 pair.Value.TotalGold,
                                 pair.Value.Xp,
-                                pair.Value.MinionsKilled + pair.Value.JungleMinionsKilled))))
+                                pair.Value.MinionsKilled + pair.Value.JungleMinionsKilled,
+                                pair.Value.DamageStats?.TotalDamageDoneToChampions ?? 0,
+                                pair.Value.DamageStats?.TotalDamageTaken ?? 0,
+                                pair.Value.TimeEnemySpentControlled,
+                                pair.Value.Position?.X ?? 0,
+                                pair.Value.Position?.Y ?? 0))))
                 .ToList();
 
-            var kills = timeline.Info.Frames
-                .SelectMany(frame => frame.Events ?? [])
+            var allEvents = timeline.Info.Frames.SelectMany(frame => frame.Events ?? []).ToList();
+
+            var kills = allEvents
                 .Where(evt => evt.Type == "CHAMPION_KILL")
                 .Select(evt => new TimelineKillEvent(
                     evt.Timestamp,
@@ -321,11 +328,34 @@ public class RiotApiClient
                     evt.AssistingParticipantIds ?? []))
                 .ToList();
 
+            // v4 실험(15분 라인전/후반 분리)용 — 시야점수·오브젝트딜량은 프레임에 없어서, 와드 설치
+            // 이벤트 수 / 오브젝트 처치 관여 이벤트로 근사(proxy)합니다. 정확한 값이 아니라 "근사치"입니다.
+            var wardsPlaced = allEvents
+                .Where(evt => evt.Type == "WARD_PLACED" && evt.CreatorId is not null)
+                .Select(evt => new TimelineParticipantEvent(evt.Timestamp, evt.CreatorId!.Value))
+                .ToList();
+
+            var objectiveKills = allEvents
+                .Where(evt => (evt.Type == "ELITE_MONSTER_KILL" || evt.Type == "BUILDING_KILL") && evt.KillerId is not null)
+                .Select(evt => new TimelineParticipantEvent(evt.Timestamp, evt.KillerId!.Value))
+                .ToList();
+
+            // v4.0.0 "오브젝트 몬스터 종류별 보너스"용 — 막타 친 사람 + 몬스터 종류(DRAGON/HORDE=
+            // 유충/BARON_NASHOR/RIFTHERALD 등)를 따로 남깁니다. 어시스트 목록은 없어서(킬러만) 팀
+            // 전체 관여도는 여전히 damageDealtToObjectives가 더 정확합니다.
+            var eliteMonsterKills = allEvents
+                .Where(evt => evt.Type == "ELITE_MONSTER_KILL" && evt.KillerId is not null)
+                .Select(evt => new TimelineMonsterKillEvent(evt.Timestamp, evt.KillerId!.Value, evt.MonsterType ?? "UNKNOWN"))
+                .ToList();
+
             return TimelineResult.Success(new TimelineDetail(
                 matchId,
                 timeline.Info.FrameInterval,
                 frames,
-                kills));
+                kills,
+                wardsPlaced,
+                objectiveKills,
+                eliteMonsterKills));
         }
         catch (Exception ex)
         {
@@ -453,6 +483,10 @@ public class RiotApiClient
 
         [JsonPropertyName("damageDealtToObjectives")]
         public long DamageDealtToObjectives { get; set; }
+
+        // v4.0.0 서폿 후반 "힐+보호막" 복합 지표용으로 2026-08-21 추가.
+        [JsonPropertyName("totalDamageShieldedOnTeammates")]
+        public long DamageShieldedOnTeammates { get; set; }
     }
 
     private class TimelineResponse
@@ -498,6 +532,35 @@ public class RiotApiClient
 
         [JsonPropertyName("jungleMinionsKilled")]
         public int JungleMinionsKilled { get; set; }
+
+        // v4 실험(15분 라인전/후반 분리)용으로 2026-08-21 추가.
+        [JsonPropertyName("timeEnemySpentControlled")]
+        public int TimeEnemySpentControlled { get; set; }
+
+        [JsonPropertyName("damageStats")]
+        public TimelineDamageStatsResponse? DamageStats { get; set; }
+
+        // v4.0.0 로밍/다른라인기여도 근사치용(2026-08-21) — 맵 좌표.
+        [JsonPropertyName("position")]
+        public TimelinePositionResponse? Position { get; set; }
+    }
+
+    private class TimelinePositionResponse
+    {
+        [JsonPropertyName("x")]
+        public int X { get; set; }
+
+        [JsonPropertyName("y")]
+        public int Y { get; set; }
+    }
+
+    private class TimelineDamageStatsResponse
+    {
+        [JsonPropertyName("totalDamageDoneToChampions")]
+        public long TotalDamageDoneToChampions { get; set; }
+
+        [JsonPropertyName("totalDamageTaken")]
+        public long TotalDamageTaken { get; set; }
     }
 
     private class TimelineEventResponse
@@ -516,6 +579,15 @@ public class RiotApiClient
 
         [JsonPropertyName("assistingParticipantIds")]
         public List<int>? AssistingParticipantIds { get; set; }
+
+        // WARD_PLACED 이벤트의 설치자 — v4 실험에서 시야 근사치(와드 개수)로 사용.
+        [JsonPropertyName("creatorId")]
+        public int? CreatorId { get; set; }
+
+        // ELITE_MONSTER_KILL의 몬스터 종류(DRAGON/HORDE=유충/BARON_NASHOR/RIFTHERALD 등) —
+        // v4.0.0 오브젝트 보너스용으로 2026-08-21 추가.
+        [JsonPropertyName("monsterType")]
+        public string? MonsterType { get; set; }
     }
 }
 
@@ -570,7 +642,8 @@ public record FullMatchParticipant(
     int? CcTimeDealt = null,
     long? HealAmount = null,
     int? WardsPlaced = null,
-    long? DamageToObjectives = null);
+    long? DamageToObjectives = null,
+    long? DamageShieldedOnTeammates = null);
 
 public record FullMatchDetail(
     string MatchId,
@@ -587,18 +660,39 @@ public record FullMatchResult(bool IsSuccess, string Message, FullMatchDetail? M
     public static FullMatchResult Failure(string reason) => new(false, reason);
 }
 
-// 15분 라인전/후반 분리, 골드 스윙 분석 실험용 (TimelineExperiment 전용 — AfterUpgrade.md 1단계 실험).
-public record TimelineParticipantFrame(int ParticipantId, long TotalGold, long Xp, int Cs);
+// 15분 라인전/후반 분리, 골드 스윙 분석 실험용 (TimelineExperiment/ContributionScoreV4Experiment 전용
+// — AfterUpgrade.md 1단계 실험. DamageDealtToChampions/DamageTaken/CcTimeDealtCumulative는 2026-08-21
+// v4 실험을 위해 추가됨 — 전부 그 프레임 시점까지의 "누적치"입니다).
+public record TimelineParticipantFrame(
+    int ParticipantId,
+    long TotalGold,
+    long Xp,
+    int Cs,
+    long DamageDealtToChampions,
+    long DamageTaken,
+    int CcTimeDealtCumulative,
+    int PositionX,
+    int PositionY);
 
 public record TimelineFrame(long TimestampMs, IReadOnlyDictionary<int, TimelineParticipantFrame> ParticipantFrames);
 
 public record TimelineKillEvent(long TimestampMs, int? KillerId, int VictimId, IReadOnlyList<int> AssistingParticipantIds);
 
+// WARD_PLACED(설치자)·ELITE_MONSTER_KILL/BUILDING_KILL(처치자) 이벤트 — v4 실험에서 시야/오브젝트
+// 기여도의 "근사치"로 씁니다(정확한 시야점수·오브젝트딜량은 타임라인에 없어서 개수 기반 proxy).
+public record TimelineParticipantEvent(long TimestampMs, int ParticipantId);
+
+// ELITE_MONSTER_KILL 전용(몬스터 종류 포함) — v4.0.0 오브젝트 보너스 지표용, 2026-08-21 추가.
+public record TimelineMonsterKillEvent(long TimestampMs, int ParticipantId, string MonsterType);
+
 public record TimelineDetail(
     string MatchId,
     int FrameIntervalMs,
     IReadOnlyList<TimelineFrame> Frames,
-    IReadOnlyList<TimelineKillEvent> Kills);
+    IReadOnlyList<TimelineKillEvent> Kills,
+    IReadOnlyList<TimelineParticipantEvent> WardsPlaced,
+    IReadOnlyList<TimelineParticipantEvent> ObjectiveKillParticipations,
+    IReadOnlyList<TimelineMonsterKillEvent> EliteMonsterKills);
 
 public record TimelineResult(bool IsSuccess, string Message, TimelineDetail? Timeline = null)
 {

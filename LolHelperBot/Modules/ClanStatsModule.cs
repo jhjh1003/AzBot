@@ -1354,11 +1354,14 @@ public partial class AtoZModule
             }
 
             var nameByUserId = await GetDisplayNameLookupAsync(Context.Guild.Id);
+            var v4Scores = await _matchRepository.GetContributionV4ScoresAsync(
+                Context.Guild.Id, matches.Select(m => m.MatchId).ToList());
 
             var embedBuilder = new EmbedBuilder()
                 .WithTitle("AtoZ 아재전적 (5인큐)")
                 .WithColor(Color.Gold)
-                .WithFooter("시간은 KST 기준. 👑/💀/(N위)는 그 판 우리 팀 5명 상대 비교 기여도 순위입니다(리플 업로드로만 저장된 경기는 표시 안 됨).");
+                .WithFooter("시간은 KST 기준. 👑/💀/(N위)는 그 판 우리 팀 5명 상대 비교 기여도 순위입니다(v4.0.0 — 15분 라인전+후반 분리, " +
+                    "v4-backfill 안 된 옛날 경기는 v3로 자동 대체. 리플 업로드로만 저장된 경기는 표시 안 됨).");
 
             foreach (var match in matches)
             {
@@ -1366,11 +1369,27 @@ public partial class AtoZModule
                 var minutes = Math.Max(0, match.GameDurationSeconds) / 60;
 
                 // 팀별로(5명 채워졌으면) 기여도 순위를 계산해서, 그 판 베스트(👑)/워스트(💀)를 표시합니다.
-                // .rofl 업로드로만 저장돼 지표가 없는 경기는 순위 없이 기존처럼 표시됩니다.
+                // v4.0.0 점수가 5명 전원 있으면 그걸 쓰고(백필된 경기), 없으면 v3(전체 게임 기준)로 폴백.
                 var rankByUserId = new Dictionary<ulong, int>();
                 foreach (var teamGroup in match.Participants.GroupBy(p => p.TeamId))
                 {
-                    var ranked = _contributionScoreCalculator.TryCalculate(teamGroup.ToList());
+                    var teamList = teamGroup.ToList();
+                    var v4TeamScores = teamList
+                        .Select(p => (Participant: p, Score: v4Scores.GetValueOrDefault((match.MatchId, p.DiscordUserId), double.NaN)))
+                        .ToList();
+
+                    if (v4TeamScores.All(x => !double.IsNaN(x.Score)))
+                    {
+                        var v4Ranked = v4TeamScores.OrderByDescending(x => x.Score).ToList();
+                        for (var i = 0; i < v4Ranked.Count; i++)
+                        {
+                            rankByUserId[v4Ranked[i].Participant.DiscordUserId] = i + 1;
+                        }
+
+                        continue;
+                    }
+
+                    var ranked = _contributionScoreCalculator.TryCalculate(teamList);
                     if (ranked is null)
                     {
                         continue;
@@ -1443,6 +1462,8 @@ public partial class AtoZModule
 
             var matches = await _matchRepository.GetContributionStatsInRangeAsync(
                 Context.Guild.Id, FlexQueueId, monthStartKst.ToUniversalTime(), monthEndKst.ToUniversalTime());
+            var v4Scores = await _matchRepository.GetContributionV4ScoresAsync(
+                Context.Guild.Id, matches.Select(m => m.MatchId).ToList());
 
             var bestCounts = new Dictionary<ulong, int>();
             var worstCounts = new Dictionary<ulong, int>();
@@ -1453,22 +1474,41 @@ public partial class AtoZModule
             {
                 foreach (var teamGroup in match.Participants.GroupBy(p => p.TeamId))
                 {
-                    var ranked = _contributionScoreCalculator.TryCalculate(teamGroup.ToList());
-                    if (ranked is null)
+                    var teamList = teamGroup.ToList();
+
+                    // v4.0.0 점수가 5명 전원 있으면 그걸로(백필된 경기), 없으면 v3로 폴백.
+                    var v4TeamScores = teamList
+                        .Select(p => (Participant: p, Score: v4Scores.GetValueOrDefault((match.MatchId, p.DiscordUserId), double.NaN)))
+                        .ToList();
+
+                    IReadOnlyList<(ulong DiscordUserId, int Rank)> rankedRows;
+                    if (v4TeamScores.All(x => !double.IsNaN(x.Score)))
                     {
-                        continue;
+                        rankedRows = v4TeamScores
+                            .OrderByDescending(x => x.Score)
+                            .Select((x, i) => (x.Participant.DiscordUserId, Rank: i + 1))
+                            .ToList();
+                    }
+                    else
+                    {
+                        var v3Ranked = _contributionScoreCalculator.TryCalculate(teamList);
+                        if (v3Ranked is null)
+                        {
+                            continue;
+                        }
+
+                        rankedRows = v3Ranked.Select(r => (r.Participant.DiscordUserId, r.Rank)).ToList();
                     }
 
                     totalMatchesScored++;
-                    foreach (var row in ranked)
+                    foreach (var (userId, rank) in rankedRows)
                     {
-                        var userId = row.Participant.DiscordUserId;
                         gamesScored[userId] = gamesScored.GetValueOrDefault(userId) + 1;
-                        if (row.Rank == 1)
+                        if (rank == 1)
                         {
                             bestCounts[userId] = bestCounts.GetValueOrDefault(userId) + 1;
                         }
-                        else if (row.Rank == 5)
+                        else if (rank == 5)
                         {
                             worstCounts[userId] = worstCounts.GetValueOrDefault(userId) + 1;
                         }
@@ -1621,11 +1661,11 @@ public partial class AtoZModule
         // /아재전적 줄 앞에 붙는 라인 아이콘 — 갑옷(탑)/풀(정글)/마법사(미드)/화살(원딜)/방패(서폿)
         private static string GetPositionIcon(string position) => position switch
         {
-            "TOP" => "🛡️",
+            "TOP" => "🪓",
             "JUNGLE" => "🌿",
             "MIDDLE" => "🧙",
             "BOTTOM" => "🏹",
-            "UTILITY" => "⚜️",
+            "UTILITY" => "🛡️",
             _ => "❔",
         };
 

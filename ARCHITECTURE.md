@@ -94,7 +94,8 @@ LolHelperBot/
 │   ├── RiotApiClient.cs
 │   ├── MemberRepository.cs
 │   ├── MatchRepository.cs   ← 제일 큼 (DB 쿼리 모음, 1300줄+)
-│   ├── ContributionScoreCalculator.cs
+│   ├── ContributionScoreCalculator.cs   ← v3(전체 게임 기준)
+│   ├── ContributionScoreCalculatorV4.cs ← v4.0.0(15분 라인전/후반 분리, 2026-08-21 정식 반영)
 │   ├── RoflReplayParser.cs
 │   ├── MetaTierRepository.cs
 │   ├── BanPickRecommendationService.cs
@@ -127,7 +128,8 @@ LolHelperBot/
 | **RiotApiClient.cs** | Riot Games 서버와 실제로 통신하는 유일한 곳. "이 사람 계정 찾아줘", "이 경기 상세 알려줘", "이 경기 타임라인 줘" 같은 HTTP 요청을 보내고 응답을 받아옴 |
 | **MemberRepository.cs** | 클랜원(본캐/부캐) 등록 정보를 담은 DB 테이블을 읽고 씀 |
 | **MatchRepository.cs** | 경기 기록 DB 테이블을 읽고 씀. 이 봇의 거의 모든 통계 쿼리(`/티어픽`, `/승률순위`, `/조합추천`...)가 결국 이 파일의 메서드를 호출함. 제일 크고 제일 중요한 파일 |
-| **ContributionScoreCalculator.cs** | "그 판에서 누가 잘했는지" 기여도 점수를 계산. 라인별 가중치는 코드가 아니라 `Config/ContributionScoreWeights.txt`에서 읽어와서, 숫자만 바꿔도 튜닝됨 |
+| **ContributionScoreCalculator.cs** | v3 — "그 판에서 누가 잘했는지" 기여도 점수를 게임 종료 후 최종 합계만으로 계산(맞라인 상대 1:1 비교). 가중치는 `Config/ContributionScoreWeights.txt` |
+| **ContributionScoreCalculatorV4.cs** | v4.0.0(2026-08-21) — 15분 이전(라인전)/이후(후반)를 나눠서 계산하고 마지막에 합침. Match-V5 상세만으로는 안 되고 **Timeline API**(분 단위 골드/XP/위치, 킬 이벤트)가 꼭 필요함. 봇듀오(원딜↔서폿)는 서로 점수를 0.7:0.3으로 섞음. 계산 결과는 매번 다시 계산 안 하고 `match_contribution_v4` 테이블에 미리 저장해둠(8절 참고). 가중치는 `Config/ContributionScoreWeightsV4.txt` |
 | **RoflReplayParser.cs** | `.rofl` 리플레이 파일(게임 클라이언트가 로컬에 저장하는 파일)을 직접 열어서 전적을 추출. Riot API를 안 거치는 보조 수집 경로 |
 | **MetaTierRepository.cs** | `Config/MetaTierSnapshot.json`(사람이 op.gg 보고 직접 채워넣는 파일)을 읽어서, 일반 메타 티어/카운터픽 정보를 제공 |
 | **BanPickRecommendationService.cs** | `/밴픽추천`의 계산 로직 전담(2026-08-20 신설). 라인별 픽 후보, 밴 후보 3종류를 순수 데이터로 계산해서 돌려줌 |
@@ -146,7 +148,11 @@ banpick-test`처럼 터미널에서 직접 실행해서, 디스코드 없이 데
 
 | 파일 | 역할 |
 |---|---|
-| **TimelineExperiment.cs** | Riot의 "타임라인 API"(경기 중 분 단위 골드/킬 데이터)를 실제로 호출해서 어떤 데이터가 나오는지 확인하는 실험. 나중에 "15분 라인전 vs 후반 분리" 기능을 만들 때의 밑작업 |
+| **TimelineExperiment.cs** | Riot의 "타임라인 API"(경기 중 분 단위 골드/킬 데이터)를 실제로 호출해서 어떤 데이터가 나오는지 확인하는 실험. v4.0.0의 밑작업이었음 |
+| **TimelineRawDumpExperiment.cs** | 타임라인 API 원본 JSON을 그대로 찍어봄(위치 좌표, 오브젝트 종류, 이벤트 타입 등 어떤 필드가 있는지 확인용) |
+| **ContributionScoreV4Experiment.cs** | v4 가중치를 v3와 비교/진단하던 실험(포지션별 평균 Advantage 등). `ContributionScoreCalculatorV4.cs`로 정식 반영된 뒤에도 빠른 진단용으로 남겨둠 |
+| **ContributionV4Backfill.cs** | `dotnet run -- v4-backfill [연월]` — 지정한 달의 매치를 Timeline API로 다시 불러서 v4 점수를 계산해 `match_contribution_v4`에 저장. `/전적수집`이 아직 이 계산을 자동으로 안 해서, 새 달이 되면 이 명령을 다시 돌려야 함 |
+| **MatchRawDumpExperiment.cs** / **CaitlynBuildExperiment.cs** | 매치 상세 원본 확인, 특정 챔피언 아이템 빌드별 승률 조회 같은 1회성 질문에 답하려고 만든 도구들 |
 | **BanPickQueryExperiment.cs** | `/밴픽추천`이 쓰는 DB 쿼리들이 기대한 값을 돌려주는지 확인하는 스모크 테스트 |
 | **ChampionTierQueryExperiment.cs** | `/티어픽`이 쓰는 서비스 결과가 원시 SQL 쿼리와 일치하는지 확인하는 스모크 테스트 |
 
@@ -158,6 +164,11 @@ banpick-test`처럼 터미널에서 직접 실행해서, 디스코드 없이 데
 새로 생기는 식입니다. 챔피언명, 승패, 킬/데스/어시스트, 골드, 그 판 맞라인 상대 정보 등이
 한 줄에 다 들어있어서, `/티어픽`이든 `/밴픽추천`이든 결국 이 테이블에 SQL로 GROUP
 BY·필터를 거는 것뿐입니다.
+
+**`match_contribution_v4`**(2026-08-21 신설)는 별도 테이블입니다 — 한 줄이 "경기 하나 +
+참가자 한 명의 v4.0.0 최종 점수"(라인전 점수/후반 점수/최종 점수 3개 숫자만)입니다.
+`/아재전적`·`/명예의전당`은 그 판 5명 전원이 이 테이블에 있으면 이 점수로 순위를 매기고,
+없으면(아직 백필 안 된 옛날 경기) `ContributionScoreCalculator`(v3)로 자동 대체합니다.
 
 ## 9. 리팩토링은 왜 하고 있나 (지금까지 한 일)
 
