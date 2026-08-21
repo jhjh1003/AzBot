@@ -28,6 +28,26 @@ CHANGELOG.md는 "이미 배포된 것"만 남기고, 앞으로 할지도 모르�
   기여를 못 했는지를 보는 기능. 이것도 Timeline API 필요. "아무것도 안 했다"를 자동으로 판정하면
   오귀인(부당한 비난) 리스크가 있어서 신중한 설계가 필요함. 위 15분 분리와 같은 Timeline API
   작업이라 같이 묶어서 진행하는 게 효율적일 듯.
+- **시간별 기여도 그래프**(op.gg의 "분당 OP스코어" 그래프를 보고 사용자가 제안, 2026-08-21). op.gg는
+  1분 간격(리그 오브 레전드 Timeline API의 `frameInterval`과 정확히 일치)으로 그 판 10명 전체
+  상대 비교 스코어를 재계산해서 초반엔 5.0 근처로 평평하다가 후반에 벌어지는 라인 그래프를 보여줌.
+  지금 우리 기여도 점수는 게임 종료 후 **딱 한 번**만(Match-V5 상세 API만 사용, Timeline 미사용)
+  계산하는 정적 스냅샷이라 이런 시간축 표현이 원천적으로 불가능함.
+  - **데이터 모델 확인 완료(2026-08-21)** — `Tools/TimelineRawDumpExperiment.cs`(`dotnet run --
+    timeline-raw <matchId>`)로 실제 매치(`KR_8348359834`) 타임라인 원본을 찍어봄. `participantFrames`는
+    1분마다 **누적치**로 `totalGold`/`currentGold`/`xp`/`level`/`minionsKilled`+`jungleMinionsKilled`,
+    `damageStats.totalDamageDoneToChampions`/`totalDamageTaken`(물리/마법/고정 분리),
+    `timeEnemySpentControlled`(CC 기여 누적치, 지금 `cc_time` 지표와 대응)를 줌. `events` 스트림에
+    `CHAMPION_KILL`(killerId/victimId/assistingParticipantIds+정확한 타임스탬프)이 있어서 **임의
+    시점의 누적 K/D/A 재구성이 가능**함. `WARD_PLACED`/`WARD_KILL`/`ELITE_MONSTER_KILL`/
+    `BUILDING_KILL`/`ITEM_PURCHASED` 등 이벤트도 존재.
+  - **한계**: `vision_score`·`damage_to_objectives`·`heal_amount`는 프레임에 없고 게임 종료 시
+    총합만 제공됨 — 시간별로 보려면 와드 이벤트 개수 등으로 근사할 수밖에 없음(정확한 시간별 값 아님).
+  - **다음 단계 후보**: (1) `RiotApiClient`의 `TimelineParticipantFrame` DTO에 `damageStats`
+    필드 추가, (2) `ContributionScoreCalculator`와 유사한 가중 비교 로직을 프레임마다 반복 적용하는
+    v4 실험, (3) Discord 임베드는 네이티브로 라인 그래프를 못 그리므로 이미지 렌더링(예: QuickChart
+    같은 외부 차트 서비스 호출 또는 로컬에서 이미지 생성 후 첨부) 방법 검토 필요 — 이건 지금 프로젝트에
+    없는 새 인프라라 별도 논의 필요.
 
 ## 2. `/전적수집` 2단계
 

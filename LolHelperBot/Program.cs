@@ -106,6 +106,13 @@ if (args.Length > 0 && args[0] == "timeline-test")
     return;
 }
 
+// op.gg 시간별 OP스코어 그래프 비교용 1회성 실험: `dotnet run -- timeline-raw <matchId>`
+if (args.Length > 1 && args[0] == "timeline-raw")
+{
+    await TimelineRawDumpExperiment.RunAsync(riotApiKey ?? string.Empty, riotAccountRegion, args[1]);
+    return;
+}
+
 // /밴픽추천 2단계 스모크 테스트: `dotnet run -- banpick-test [라인]` (Riot API 호출 없이 DB만 조회).
 if (args.Length > 0 && args[0] == "banpick-test")
 {

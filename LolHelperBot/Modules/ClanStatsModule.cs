@@ -1382,22 +1382,26 @@ public partial class AtoZModule
                     }
                 }
 
+                // AtoZ 5인큐 전적은 5명 전원이 같은 팀이라 승패가 판 전체에 하나뿐 — 줄마다 반복 표시하지 않고
+                // 날짜 앞에 한 번만(🔵승/🔴패) 표시합니다.
+                var win = match.Participants.Count > 0 && match.Participants[0].Win;
+                var winMark = win ? "🔵" : "🔴";
+
                 var lines = match.Participants
                     .OrderBy(p => p.TeamId)
                     .ThenBy(p => GetPositionOrder(p.TeamPosition))
                     .Select(p =>
                     {
-                        var result = p.Win ? "🟢" : "🔴";
                         var name = nameByUserId.GetValueOrDefault(p.DiscordUserId, "알 수 없는 멤버");
                         var rankMark = rankByUserId.TryGetValue(p.DiscordUserId, out var rank)
                             ? rank switch { 1 => " 👑", 5 => " 💀", _ => $" ({rank}위)" }
                             : "";
-                        return $"{result} {GetKoreanPosition(p.TeamPosition)} **{EscapeMarkdown(p.ChampionName)}** " +
+                        return $"{GetPositionIcon(p.TeamPosition)} {GetKoreanPosition(p.TeamPosition)} **{EscapeMarkdown(p.ChampionName)}** " +
                             $"{p.Kills}/{p.Deaths}/{p.Assists} — {EscapeMarkdown(name)}{rankMark}";
                     });
 
                 embedBuilder.AddField(
-                    $"{playedAt:MM/dd HH:mm} · {minutes}분 · {match.Participants.Count}명 참여",
+                    $"{winMark} {playedAt:MM/dd HH:mm} · {minutes}분 · {match.Participants.Count}명 참여",
                     string.Join("\n", lines));
             }
 
@@ -1612,6 +1616,17 @@ public partial class AtoZModule
             "BOTTOM" => "원딜",
             "UTILITY" => "서폿",
             _ => "기타",
+        };
+
+        // /아재전적 줄 앞에 붙는 라인 아이콘 — 갑옷(탑)/풀(정글)/마법사(미드)/화살(원딜)/방패(서폿)
+        private static string GetPositionIcon(string position) => position switch
+        {
+            "TOP" => "🛡️",
+            "JUNGLE" => "🌿",
+            "MIDDLE" => "🧙",
+            "BOTTOM" => "🏹",
+            "UTILITY" => "⚜️",
+            _ => "❔",
         };
 
         // GetTierRank는 2026-08-20 리팩토링 2단계에서 BanPickRecommendationService로 이관됨(사용처가 그 서비스뿐이었음).

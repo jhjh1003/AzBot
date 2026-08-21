@@ -85,10 +85,13 @@ MIDDLE.wards_placed = 0.3
 MIDDLE.kill_participation = 0.3
 
 # 원딜: KDA차이, 골드수급, 성장, 입힌피해량 순, 나머지는 비슷하게
+# 2026-08-21: OP.GG 캡처 4경기 대조 결과 원딜이 팀 내 딜량 1위인데도 기여도 순위가 낮게 나오는
+# 사례가 있어(맞라인 상대가 만만찮으면 "격차"가 안 벌어지는 구조), damage_dealt 비중을 0.6→0.8로
+# 올려 딜량 기여를 좀 더 정직하게 반영(다른 v3 지표는 그대로 — 표본이 작아 미세 조정 수준으로만)
 BOTTOM.kda = 1.0
 BOTTOM.creep_score = 0.8
 BOTTOM.gold_earned = 0.8
-BOTTOM.damage_dealt = 0.6
+BOTTOM.damage_dealt = 0.8
 BOTTOM.damage_taken = 0.3
 BOTTOM.vision_score = 0.3
 BOTTOM.wards_placed = 0.3
@@ -96,8 +99,11 @@ BOTTOM.kill_participation = 0.3
 BOTTOM.damage_to_objectives = 0.3
 
 # 서폿: KDA차이, 시야점수, 오브젝트, (CC/힐 중 큰 쪽), 성장, 골드 순, 나머지는 비슷하게
-UTILITY.kda = 1.0
-UTILITY.vision_score = 0.8
+# 2026-08-21: 같은 대조에서 서폿(어시스트 많고 데스 적은 스탯라인)이 맞라인 상대를 KDA로 크게
+# 압도해 👑을 받는데 OP.GG에서는 중위권인 사례가 반복돼, kda/vision_score 비중을 살짝 낮춤
+# (kda 1.0→0.8, vision_score 0.8→0.6) — 여전히 서폿 지표 중 1·2위지만 쏠림은 완화
+UTILITY.kda = 0.8
+UTILITY.vision_score = 0.6
 UTILITY.damage_to_objectives = 0.6
 UTILITY.cc_or_heal = 0.6
 UTILITY.wards_placed = 0.5
