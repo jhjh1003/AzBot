@@ -1099,8 +1099,8 @@ public partial class AtoZModule
                     if (positionChampionLookup.TryGetValue(row.TeamPosition, out var champsInLine))
                     {
                         var topChamps = champsInLine
-                            .OrderByDescending(c => c.Wins * 1.0 / c.Games)
-                            .ThenByDescending(c => c.Games)
+                            .OrderByDescending(c => c.Games)
+                            .ThenByDescending(c => c.Wins * 1.0 / c.Games)
                             .Take(3)
                             .Select(c => $"{EscapeMarkdown(c.ChampionName)} {c.Games}판 {Math.Round(c.Wins * 100.0 / c.Games)}%");
                         line += $"\n　ㄴ 모스트: {string.Join(", ", topChamps)}";
