@@ -2,11 +2,11 @@
 // Source: Claude (Claude Code / Cowork)
 // Date: 2026-08-21
 // Reviewer: (박정훈)
-// Review: "기" 멤버의 AZ 자랭 케이틀린 빌드별 승률 1회성 조회 실험 코드. 우리 DB엔 아이템 빌드를
-// 저장 안 해서(승률/KDA 등만 저장), 매치별로 Riot API 원본을 다시 불러 item0~6을 뽑고, Data
-// Dragon(공식, 인증 불필요)으로 아이템 이름을 정확히 해석해서 보여줍니다 — "칼날비"/"기발" 같은
-// 커뮤니티 은어를 제가 임의로 아이템에 매칭하면 틀릴 위험이 있어서, 실제 아이템 이름을 그대로
-// 보여주고 사용자가 직접 어느 쪽인지 확인하도록 함. `dotnet run -- caitlyn-build <displayNameContains>`.
+// Review: "기" 멤버의 AZ 자랭 케이틀린 최근 20경기 — 핵심 특성(키스톤)별 승률 1회성 조회.
+// "칼날비"(Hail of Blades)/"기발=기민한 발놀림"(Fleet Footwork) 같은 특성 이름은 Data Dragon의
+// runesReforged.json(공식, 인증 불필요)으로 정확히 해석합니다. 우리 DB엔 특성 선택을 저장 안 해서
+// 매치별로 Riot API 원본을 다시 불러 participant.perks에서 뽑습니다.
+// `dotnet run -- caitlyn-build <displayNameContains>`.
 
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -16,6 +16,8 @@ namespace LolHelperBot.Tools;
 
 public static class CaitlynBuildExperiment
 {
+    private const int RecentGameCount = 20;
+
     public static async Task RunAsync(string apiKey, string accountRegion, string databasePath, string displayNameContains)
     {
         await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
@@ -44,8 +46,7 @@ public static class CaitlynBuildExperiment
             return;
         }
 
-        // 부분일치가 여러 명이면 정확히 일치하는 닉네임을 우선(예: "기"로 검색했을 때
-        // "니가그린기린그림"이 아니라 정말 닉네임이 "기"인 사람을 골라야 함).
+        // 부분일치가 여러 명이면 정확히 일치하는 닉네임을 우선.
         var exactMatch = members.FirstOrDefault(m => m.Name == displayNameContains);
         var chosen = exactMatch.Name is not null ? exactMatch : members[0];
 
@@ -62,9 +63,11 @@ public static class CaitlynBuildExperiment
             SELECT DISTINCT match_id, win
             FROM match_participations
             WHERE discord_user_id = $userId AND champion_name = 'Caitlyn'
-            ORDER BY match_id DESC;
+            ORDER BY match_id DESC
+            LIMIT $limit;
             """;
         matchCommand.Parameters.AddWithValue("$userId", userId);
+        matchCommand.Parameters.AddWithValue("$limit", RecentGameCount);
 
         var matches = new List<(string MatchId, bool Win)>();
         await using (var reader = await matchCommand.ExecuteReaderAsync())
@@ -81,33 +84,29 @@ public static class CaitlynBuildExperiment
             return;
         }
 
-        Console.WriteLine($"[caitlyn-build] 케이틀린 {matches.Count}판 발견 — 아이템 이름 사전(Data Dragon) 로딩 중...");
+        Console.WriteLine($"[caitlyn-build] 최근 케이틀린 {matches.Count}판 대상 — 특성(룬) 이름 사전(Data Dragon) 로딩 중...");
 
         using var ddragonClient = new HttpClient { BaseAddress = new Uri("https://ddragon.leagueoflegends.com"), Timeout = TimeSpan.FromSeconds(15) };
         var versions = await ddragonClient.GetFromJsonAsync<List<string>>("/api/versions.json") ?? [];
         var latestVersion = versions.FirstOrDefault() ?? "14.1.1";
-        var itemData = await ddragonClient.GetFromJsonAsync<JsonElement>($"/cdn/{latestVersion}/data/ko_KR/item.json");
-        var itemsRoot = itemData.GetProperty("data");
+        var runesData = await ddragonClient.GetFromJsonAsync<JsonElement>($"/cdn/{latestVersion}/data/ko_KR/runesReforged.json");
 
-        string ItemName(int id)
+        // perkId -> 이름 (트리별 슬롯을 전부 순회하며 평평하게 모음. 키스톤이든 일반 룬이든 다 여기 있음).
+        var runeNameById = new Dictionary<int, string>();
+        foreach (var tree in runesData.EnumerateArray())
         {
-            if (id == 0) return "";
-            return itemsRoot.TryGetProperty(id.ToString(), out var item) && item.TryGetProperty("name", out var n)
-                ? n.GetString() ?? $"#{id}"
-                : $"#{id}(알수없음)";
+            foreach (var slot in tree.GetProperty("slots").EnumerateArray())
+            {
+                foreach (var rune in slot.GetProperty("runes").EnumerateArray())
+                {
+                    var id = rune.GetProperty("id").GetInt32();
+                    var runeName = rune.GetProperty("name").GetString() ?? $"#{id}";
+                    runeNameById[id] = runeName;
+                }
+            }
         }
 
-        int ItemGold(int id)
-        {
-            if (id == 0) return 0;
-            return itemsRoot.TryGetProperty(id.ToString(), out var item) &&
-                item.TryGetProperty("gold", out var gold) &&
-                gold.TryGetProperty("total", out var total)
-                ? total.GetInt32()
-                : 0;
-        }
-
-        Console.WriteLine($"[caitlyn-build] Riot API로 매치별 빌드(item0~6) 조회 중...\n");
+        Console.WriteLine("[caitlyn-build] Riot API로 매치별 특성 조회 중...\n");
 
         using var client = new HttpClient
         {
@@ -116,7 +115,7 @@ public static class CaitlynBuildExperiment
         };
         client.DefaultRequestHeaders.Add("X-Riot-Token", apiKey);
 
-        var buildResults = new List<(string MatchId, bool Win, string SignatureItem)>();
+        var results = new List<(string MatchId, bool Win, string Keystone)>();
 
         foreach (var (matchId, win) in matches)
         {
@@ -146,31 +145,33 @@ public static class CaitlynBuildExperiment
                 continue;
             }
 
-            // item6은 보통 장신구(와드) 슬롯이라 빌드 분류에서 제외. 나머지 중 골드 총액이 가장 비싼
-            // 아이템(보통 코어/신화급 딜템)을 "빌드 시그니처"로 잡음.
-            var items = new List<int>();
-            for (var i = 0; i <= 5; i++)
+            if (!mine.Value.TryGetProperty("perks", out var perks) ||
+                !perks.TryGetProperty("styles", out var styles))
             {
-                if (mine.Value.TryGetProperty($"item{i}", out var itemProp) && itemProp.ValueKind == JsonValueKind.Number)
-                {
-                    var itemId = itemProp.GetInt32();
-                    if (itemId != 0)
-                    {
-                        items.Add(itemId);
-                    }
-                }
+                Console.WriteLine($"  [{matchId}] 특성 정보 없음");
+                continue;
             }
 
-            var signatureId = items.OrderByDescending(ItemGold).FirstOrDefault();
-            var signature = signatureId == 0 ? "(완성 아이템 없음)" : ItemName(signatureId);
-            var fullBuild = string.Join(", ", items.Select(ItemName));
+            // styles[0]이 주 특성 트리, 그 안 selections[0]이 키스톤(맨 위 칸).
+            var primaryStyle = styles.EnumerateArray().FirstOrDefault(s =>
+                s.TryGetProperty("description", out var d) && d.GetString() == "primaryStyle");
+            if (primaryStyle.ValueKind == JsonValueKind.Undefined ||
+                !primaryStyle.TryGetProperty("selections", out var selections) ||
+                selections.GetArrayLength() == 0)
+            {
+                Console.WriteLine($"  [{matchId}] 키스톤 특성을 못 찾음");
+                continue;
+            }
 
-            buildResults.Add((matchId, win, signature));
-            Console.WriteLine($"  [{matchId}] {(win ? "승" : "패")} — 시그니처: {signature} | 전체 빌드: {fullBuild}");
+            var keystoneId = selections[0].GetProperty("perk").GetInt32();
+            var keystoneName = runeNameById.GetValueOrDefault(keystoneId, $"#{keystoneId}(알수없음)");
+
+            results.Add((matchId, win, keystoneName));
+            Console.WriteLine($"  [{matchId}] {(win ? "승" : "패")} — {keystoneName}");
         }
 
-        Console.WriteLine("\n===== 빌드(최고가 아이템 기준)별 승률 집계 =====");
-        foreach (var group in buildResults.GroupBy(b => b.SignatureItem).OrderByDescending(g => g.Count()))
+        Console.WriteLine("\n===== 키스톤 특성별 승률 집계 (최근 20판 기준) =====");
+        foreach (var group in results.GroupBy(r => r.Keystone).OrderByDescending(g => g.Count()))
         {
             var wins = group.Count(g => g.Win);
             var total = group.Count();

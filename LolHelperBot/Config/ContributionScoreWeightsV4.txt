@@ -76,7 +76,6 @@ EARLY_TOP.creep_score = 1.0
 EARLY_TOP.solo_kill = 1.4
 EARLY_TOP.gold_earned = 1.0
 EARLY_TOP.kda = 1.0
-EARLY_TOP.wards_placed = 1.0
 
 # ---------- EARLY_JUNGLE: CS*, 골드, 경험치, KDA*(갱관여), 오브젝트* ----------
 # vision_score는 원본 메모 "시야작업" 언급은 있는데 지표 목록엔 빠져있어서, 기본 가중치(1.0,
@@ -95,7 +94,6 @@ EARLY_MIDDLE.gold_earned = 1.0
 EARLY_MIDDLE.xp = 1.0
 EARLY_MIDDLE.solo_kill = 1.4
 EARLY_MIDDLE.kda = 1.0
-EARLY_MIDDLE.other_lane_impact = 1.4
 
 # ---------- EARLY_BOTTOM: CS, 골드*, 경험치, KDA(적은 데스는 KDA 공식에 이미 반영됨) ----------
 # 최종 점수는 코드에서 이 개인점수×0.7 + 서폿 개인점수×0.3으로 블렌드됩니다.
@@ -118,8 +116,8 @@ EARLY_UTILITY.roaming = 1.4
 LATE_TOP.damage_to_objectives = 1.0
 LATE_TOP.gold_earned = 1.0
 LATE_TOP.xp = 1.0
-LATE_TOP.damage_taken = 1.4
-LATE_TOP.cc_time = 1.4
+LATE_TOP.damage_taken = 0.6
+LATE_TOP.cc_time = 0.4
 LATE_TOP.kda = 1.0
 
 # ---------- LATE_JUNGLE: 오브젝트*, 골드, 시야, 딜량(받은피해+CC 동급), KDA ----------

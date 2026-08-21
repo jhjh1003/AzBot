@@ -129,7 +129,7 @@ LolHelperBot/
 | **MemberRepository.cs** | 클랜원(본캐/부캐) 등록 정보를 담은 DB 테이블을 읽고 씀 |
 | **MatchRepository.cs** | 경기 기록 DB 테이블을 읽고 씀. 이 봇의 거의 모든 통계 쿼리(`/티어픽`, `/승률순위`, `/조합추천`...)가 결국 이 파일의 메서드를 호출함. 제일 크고 제일 중요한 파일 |
 | **ContributionScoreCalculator.cs** | v3 — "그 판에서 누가 잘했는지" 기여도 점수를 게임 종료 후 최종 합계만으로 계산(맞라인 상대 1:1 비교). 가중치는 `Config/ContributionScoreWeights.txt` |
-| **ContributionScoreCalculatorV4.cs** | v4.0.0(2026-08-21) — 15분 이전(라인전)/이후(후반)를 나눠서 계산하고 마지막에 합침. Match-V5 상세만으로는 안 되고 **Timeline API**(분 단위 골드/XP/위치, 킬 이벤트)가 꼭 필요함. 봇듀오(원딜↔서폿)는 서로 점수를 0.7:0.3으로 섞음. 계산 결과는 매번 다시 계산 안 하고 `match_contribution_v4` 테이블에 미리 저장해둠(8절 참고). 가중치는 `Config/ContributionScoreWeightsV4.txt` |
+| **ContributionScoreCalculatorV4.cs** | v4.0.0(2026-08-21) — 15분 이전(라인전)/이후(후반)를 나눠서 계산하고 마지막에 합침. 라인전은 맞라인 상대 1:1 비교만 쓰고, **후반은 맞라인 상대 비교(30%) + 팀 내부(나 제외 4명 평균) 비교(70%)를 섞음**(2026-08-21 추가 — 후반엔 팀파이트 위주라 "지금 이 팀에서 누가 잘하나"가 더 중요하다는 판단). Match-V5 상세만으로는 안 되고 **Timeline API**(분 단위 골드/XP/위치, 킬 이벤트)가 꼭 필요함. 봇듀오(원딜↔서폿)는 서로 점수를 0.7:0.3으로 섞음. 계산 결과는 매번 다시 계산 안 하고 `match_contribution_v4` 테이블에 미리 저장해둠(8절 참고). 가중치는 `Config/ContributionScoreWeightsV4.txt` |
 | **RoflReplayParser.cs** | `.rofl` 리플레이 파일(게임 클라이언트가 로컬에 저장하는 파일)을 직접 열어서 전적을 추출. Riot API를 안 거치는 보조 수집 경로 |
 | **MetaTierRepository.cs** | `Config/MetaTierSnapshot.json`(사람이 op.gg 보고 직접 채워넣는 파일)을 읽어서, 일반 메타 티어/카운터픽 정보를 제공 |
 | **BanPickRecommendationService.cs** | `/밴픽추천`의 계산 로직 전담(2026-08-20 신설). 라인별 픽 후보, 밴 후보 3종류를 순수 데이터로 계산해서 돌려줌 |

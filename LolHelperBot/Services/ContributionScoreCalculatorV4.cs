@@ -137,14 +137,75 @@ public class ContributionScoreCalculatorV4
         int TeamKillsInWindow(HashSet<int> teamIds, long fromMs, long toMs) =>
             timeline.Kills.Count(k => k.TimestampMs > fromMs && k.TimestampMs <= toMs && k.KillerId is not null && teamIds.Contains(k.KillerId.Value));
 
-        var raw = new List<(ClanMatchParticipantRow Row, double EarlyOwn, double LateOwn, double V4Own)>();
-
-        foreach (var row in teamOfFive)
-        {
-            var mine = indexed.FirstOrDefault(x =>
+        // 15분 이후(LATE) 팀내부 비교용 — 5명의 participantId를 먼저 찾아둡니다.
+        var teamMatches = teamOfFive
+            .Select(row => (Row: row, Mine: indexed.FirstOrDefault(x =>
                 x.Participant.TeamId == row.TeamId &&
                 x.Participant.TeamPosition == row.TeamPosition &&
-                x.Participant.ChampionName == row.ChampionName);
+                x.Participant.ChampionName == row.ChampionName)))
+            .ToList();
+        var teamParticipantIds = teamMatches
+            .Where(t => t.Mine.Participant is not null)
+            .Select(t => t.Mine.ParticipantId)
+            .ToList();
+
+        // LATE 원자료(골드/CS/경험치/딜/받은딜/CC/와드/오브젝트/힐+보호막/KDA) — participantId 기준으로
+        // 한 번만 계산해서 캐싱합니다(맞라인 상대뿐 아니라 팀원 4명분까지 필요해서 재사용 필요).
+        var lateRawCache = new Dictionary<int, (long Gold, long Cs, long Xp, long DmgDealt, long DmgTaken, int Cc, int Wards, int ObjCount, double ObjPoints, long HealShield, double Kda)>();
+        (long Gold, long Cs, long Xp, long DmgDealt, long DmgTaken, int Cc, int Wards, int ObjCount, double ObjPoints, long HealShield, double Kda) GetLateRaw(int pid)
+        {
+            if (lateRawCache.TryGetValue(pid, out var cached))
+            {
+                return cached;
+            }
+
+            var f15 = frame15.ParticipantFrames.GetValueOrDefault(pid);
+            var fFinal = lastFrame.ParticipantFrames.GetValueOrDefault(pid);
+            var participant = indexed.First(x => x.ParticipantId == pid).Participant;
+
+            var gold = (fFinal?.TotalGold ?? 0) - (f15?.TotalGold ?? 0);
+            var cs = (fFinal?.Cs ?? 0) - (f15?.Cs ?? 0);
+            var xp = (fFinal?.Xp ?? 0) - (f15?.Xp ?? 0);
+            var dmgDealt = (fFinal?.DamageDealtToChampions ?? 0) - (f15?.DamageDealtToChampions ?? 0);
+            var dmgTaken = (fFinal?.DamageTaken ?? 0) - (f15?.DamageTaken ?? 0);
+            var cc = (fFinal?.CcTimeDealtCumulative ?? 0) - (f15?.CcTimeDealtCumulative ?? 0);
+            var wards = (participant.WardsPlaced ?? 0) - WardsUpTo(pid, FifteenMinutesMs);
+            var objCount = timeline.ObjectiveKillParticipations.Count(o => o.ParticipantId == pid) - ObjectivesUpTo(pid, FifteenMinutesMs);
+            var objPointsTotal = timeline.EliteMonsterKills.Where(e => e.ParticipantId == pid).Sum(e => MonsterWeight(e.MonsterType));
+            var objPoints = objPointsTotal - ObjectivePointsUpTo(pid, FifteenMinutesMs);
+            var kills = participant.Kills - KillsUpTo(pid, FifteenMinutesMs);
+            var deaths = participant.Deaths - DeathsUpTo(pid, FifteenMinutesMs);
+            var assists = participant.Assists - AssistsUpTo(pid, FifteenMinutesMs);
+            var healShield = (participant.HealAmount ?? 0) + (participant.DamageShieldedOnTeammates ?? 0);
+            var kda = Kda(kills, deaths, assists);
+
+            var result = (gold, cs, xp, dmgDealt, dmgTaken, cc, wards, objCount, objPoints, healShield, kda);
+            lateRawCache[pid] = result;
+            return result;
+        }
+
+        // 15분 이후 지표는 "맞라인 상대 비교"(30%) + "팀 내부(나 제외 4명 평균) 비교"(70%)를 섞습니다
+        // — 팀파이트/오브젝트 위주라 맞라인 상대가 어디 있는지도 모를 시기라, "지금 이 팀에서 누가
+        // 잘하고 있나"를 더 크게 봅니다(2026-08-21 사용자 요청, 비율은 30:70).
+        const double LateOpponentWeight = 0.3;
+        const double LateInternalWeight = 0.7;
+
+        double BlendedLateAdvantage(int myPid, double mineVal, double oppVal, Func<(long Gold, long Cs, long Xp, long DmgDealt, long DmgTaken, int Cc, int Wards, int ObjCount, double ObjPoints, long HealShield, double Kda), double> selector)
+        {
+            var oppAdv = Advantage(mineVal, oppVal);
+            var others = teamParticipantIds
+                .Where(id => id != myPid)
+                .Select(id => selector(GetLateRaw(id)))
+                .ToList();
+            var avgOthers = others.Count > 0 ? others.Average() : mineVal;
+            var internalAdv = Advantage(mineVal, avgOthers);
+            return LateOpponentWeight * oppAdv + LateInternalWeight * internalAdv;
+        }
+
+        var raw = new List<(ClanMatchParticipantRow Row, double EarlyOwn, double LateOwn, double V4Own)>();
+
+        foreach (var (row, mine) in teamMatches)
+        {
             var opponent = indexed.FirstOrDefault(x =>
                 x.Participant.TeamId != row.TeamId &&
                 x.Participant.TeamPosition == row.TeamPosition);
@@ -240,21 +301,43 @@ public class ContributionScoreCalculatorV4
                     teamKillsForParticipation = TeamKillsInWindow(myTeamIds, FifteenMinutesMs, long.MaxValue);
                 }
 
-                var goldAdv = Advantage(myGold, oppGold);
-                var csAdv = Advantage(myCs, oppCs);
-                var xpAdv = Advantage(myXp, oppXp);
-                var dmgDealtAdv = Advantage(myDmgDealt, oppDmgDealt);
-                var dmgTakenAdv = Advantage(myDmgTaken, oppDmgTaken);
-                var ccAdv = Advantage(myCc, oppCc);
-                var wardsAdv = Advantage(myWards, oppWards);
-                var visionAdv = wardsAdv;
-                var objAdv = Advantage(myObj, oppObj);
-                var objBonusAdv = Advantage(myObjPoints, oppObjPoints);
-                var healShieldAdv = Advantage(myHealShield, oppHealShield);
-                var soloAdv = Advantage(mySolo, oppSolo);
                 var myKda = Kda(myKills, myDeaths, myAssists);
                 var oppKda = Kda(oppKills, oppDeaths, oppAssists);
-                var kdaAdv = Advantage(myKda, oppKda);
+
+                double goldAdv, csAdv, xpAdv, dmgDealtAdv, dmgTakenAdv, ccAdv, wardsAdv, objAdv, objBonusAdv, healShieldAdv, kdaAdv;
+                if (isEarly)
+                {
+                    // 라인전은 맞라인 상대 1:1 비교만(사용자 지정 — 15분 이전은 그대로 유지).
+                    goldAdv = Advantage(myGold, oppGold);
+                    csAdv = Advantage(myCs, oppCs);
+                    xpAdv = Advantage(myXp, oppXp);
+                    dmgDealtAdv = Advantage(myDmgDealt, oppDmgDealt);
+                    dmgTakenAdv = Advantage(myDmgTaken, oppDmgTaken);
+                    ccAdv = Advantage(myCc, oppCc);
+                    wardsAdv = Advantage(myWards, oppWards);
+                    objAdv = Advantage(myObj, oppObj);
+                    objBonusAdv = Advantage(myObjPoints, oppObjPoints);
+                    healShieldAdv = Advantage(myHealShield, oppHealShield);
+                    kdaAdv = Advantage(myKda, oppKda);
+                }
+                else
+                {
+                    // 후반은 "맞라인 상대 비교"(30%) + "팀 내부 비교"(70%) 블렌드.
+                    goldAdv = BlendedLateAdvantage(mine.ParticipantId, myGold, oppGold, r => r.Gold);
+                    csAdv = BlendedLateAdvantage(mine.ParticipantId, myCs, oppCs, r => r.Cs);
+                    xpAdv = BlendedLateAdvantage(mine.ParticipantId, myXp, oppXp, r => r.Xp);
+                    dmgDealtAdv = BlendedLateAdvantage(mine.ParticipantId, myDmgDealt, oppDmgDealt, r => r.DmgDealt);
+                    dmgTakenAdv = BlendedLateAdvantage(mine.ParticipantId, myDmgTaken, oppDmgTaken, r => r.DmgTaken);
+                    ccAdv = BlendedLateAdvantage(mine.ParticipantId, myCc, oppCc, r => r.Cc);
+                    wardsAdv = BlendedLateAdvantage(mine.ParticipantId, myWards, oppWards, r => r.Wards);
+                    objAdv = BlendedLateAdvantage(mine.ParticipantId, myObj, oppObj, r => r.ObjCount);
+                    objBonusAdv = BlendedLateAdvantage(mine.ParticipantId, myObjPoints, oppObjPoints, r => r.ObjPoints);
+                    healShieldAdv = BlendedLateAdvantage(mine.ParticipantId, myHealShield, oppHealShield, r => r.HealShield);
+                    kdaAdv = BlendedLateAdvantage(mine.ParticipantId, myKda, oppKda, r => r.Kda);
+                }
+
+                var visionAdv = wardsAdv;
+                var soloAdv = Advantage(mySolo, oppSolo); // solo_kill은 LATE 가중치에서 아직 안 쓰임 — 블렌드 대상 아님.
                 var killParticipation = teamKillsForParticipation > 0
                     ? (myKills + myAssists) * 100.0 / teamKillsForParticipation
                     : 0.0;
