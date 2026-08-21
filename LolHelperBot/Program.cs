@@ -127,6 +127,21 @@ if (args.Length > 0 && args[0] == "v4-backfill")
     return;
 }
 
+// /atoz 부캐충돌해결과 동일한 로직을 여러 매치에 한 번에: `dotnet run -- resolve-conflict <롤아이디> <멤버닉네임일부> <매치ID1> [매치ID2...]`
+if (args.Length > 3 && args[0] == "resolve-conflict")
+{
+    await OwnerConflictResolveExperiment.RunAsync(
+        riotApiClient, matchRepository, databasePath, guildId, args[1], args[2], args.Skip(3).ToList());
+    return;
+}
+
+// 부캐충돌해결 실패 원인 진단(읽기 전용): `dotnet run -- inspect-conflict <matchId>`
+if (args.Length > 1 && args[0] == "inspect-conflict")
+{
+    await ConflictInspectExperiment.RunAsync(databasePath, args[1]);
+    return;
+}
+
 // 케이틀린 빌드별 승률 1회성 조회: `dotnet run -- caitlyn-build <닉네임일부>`
 if (args.Length > 1 && args[0] == "caitlyn-build")
 {

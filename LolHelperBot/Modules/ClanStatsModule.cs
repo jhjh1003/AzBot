@@ -1618,7 +1618,8 @@ public partial class AtoZModule
         /// 기여도 점수(맞라인 상대 비교)용 지표 묶음을 만듭니다. opponent가 null이면(맞라인 상대를
         /// 못 찾음 — 예: 팀 조합이 특이하거나 데이터 누락) 상대 지표는 전부 비워둡니다.
         /// </summary>
-        private static ParticipationStats BuildParticipationStats(FullMatchParticipant self, FullMatchParticipant? opponent) =>
+        // internal(private 아님) — Tools/OwnerConflictResolveExperiment.cs가 재사용합니다(같은 로직 중복 방지).
+        internal static ParticipationStats BuildParticipationStats(FullMatchParticipant self, FullMatchParticipant? opponent) =>
             new(
                 DamageDealt: self.DamageDealt,
                 DamageTaken: self.DamageTaken,

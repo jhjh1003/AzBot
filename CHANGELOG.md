@@ -6,6 +6,13 @@ LoL Helper Bot의 기능 추가/변경 내역을 버전별로 기록합니다.
 
 **아직 구현 안 한 아이디어/2단계 업그레이드는 여기 말고 [AfterUpgrade.md](AfterUpgrade.md)에서 관리합니다.** 이 파일은 "이미 배포된 것"만 남겨두는 곳입니다.
 
+## [0.8.1] - 2026-08-21
+
+### 추가
+
+- 부캐 소유자 충돌 진단/일괄 처리용 콘솔 도구 2종 추가: `Tools/ConflictInspectExperiment.cs`(`dotnet run -- inspect-conflict <matchId>`, 읽기 전용 — 저장된 롤아이디를 코드포인트 단위로 찍어서 공백/특수문자 문제 확인), `Tools/OwnerConflictResolveExperiment.cs`(`dotnet run -- resolve-conflict <롤아이디> <멤버닉네임> <매치ID...>` — `/atoz 부캐충돌해결`과 동일 로직을 매치 여러 건에 한 번에 적용). `ClanStatsModule.BuildParticipationStats`를 `internal`로 바꿔 재사용.
+- 이 도구로 KR_8349424247(Thresh)·KR_8349368889(Maokai) 2건의 "라 칸#POOH" 충돌을 ggyadong 멤버로 해결 완료(운영 DB 직접 반영).
+
 ## [0.8.0] - 2026-08-21
 
 ### 추가
