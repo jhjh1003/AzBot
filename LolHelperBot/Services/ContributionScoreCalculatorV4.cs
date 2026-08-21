@@ -184,11 +184,11 @@ public class ContributionScoreCalculatorV4
             return result;
         }
 
-        // 15분 이후 지표는 "맞라인 상대 비교"(30%) + "팀 내부(나 제외 4명 평균) 비교"(70%)를 섞습니다
+        // 15분 이후 지표는 "맞라인 상대 비교"(40%) + "팀 내부(나 제외 4명 평균) 비교"(60%)를 섞습니다
         // — 팀파이트/오브젝트 위주라 맞라인 상대가 어디 있는지도 모를 시기라, "지금 이 팀에서 누가
-        // 잘하고 있나"를 더 크게 봅니다(2026-08-21 사용자 요청, 비율은 30:70).
-        const double LateOpponentWeight = 0.3;
-        const double LateInternalWeight = 0.7;
+        // 잘하고 있나"를 더 크게 봅니다(2026-08-21 사용자 요청, 비율은 30:70 → 40:60으로 조정).
+        const double LateOpponentWeight = 0.4;
+        const double LateInternalWeight = 0.6;
 
         double BlendedLateAdvantage(int myPid, double mineVal, double oppVal, Func<(long Gold, long Cs, long Xp, long DmgDealt, long DmgTaken, int Cc, int Wards, int ObjCount, double ObjPoints, long HealShield, double Kda), double> selector)
         {
