@@ -29,4 +29,14 @@ public static class ClanConstants
 
     /// <summary>Riot API 요청 한도를 지키기 위한 호출 간 최소 대기 시간.</summary>
     public static readonly TimeSpan RiotApiDelay = TimeSpan.FromMilliseconds(1200);
+
+    /// <summary>
+    /// `/atoz 전적수집`이 저장하는 매치의 하한선(2026-08-01 00:00 KST). 이보다 오래된 경기는
+    /// `최근경기수`를 아무리 크게 줘도(예: 300) 저장하지 않습니다 — 그 이전 데이터는 API 키
+    /// 교체 이력 등으로 정합성 문제가 있었던 적이 있어(CHANGELOG 참고), 사용자 요청으로
+    /// 2026-08-22부터 수집 범위를 이 날짜 이후로 제한했습니다. 이미 저장된 그 이전 데이터는
+    /// 안 건드립니다.
+    /// </summary>
+    public static readonly DateTimeOffset MatchCollectionCutoffUtc =
+        new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.FromHours(9)).ToUniversalTime();
 }

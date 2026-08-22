@@ -61,10 +61,10 @@ public partial class AtoZModule
             _championTierService = championTierService;
         }
 
-        [SlashCommand("전적수집", "등록된 AtoZ 멤버들의 최근 자유 랭크 전적을 모아 통계 DB에 저장합니다.")]
+        [SlashCommand("전적수집", "등록된 AtoZ 멤버들의 최근 자유 랭크 전적을 모아 통계 DB에 저장합니다(2026-08-01 이후 경기만).")]
         [DefaultMemberPermissions(GuildPermission.ManageGuild)]
         public async Task CollectMatchesAsync(
-            [Summary("최근경기수", "멤버별로 확인할 최근 경기 수 (기본 20, 최대 300 — 300은 과거 경기까지 훑는 딥 백필용, 시간이 오래 걸릴 수 있음)")]
+            [Summary("최근경기수", "멤버별로 확인할 최근 경기 수 (기본 20, 최대 300). 이 수보다 오래됐어도 2026-08-01 이전 경기는 큰 값을 줘도 저장 안 됨")]
         int recentCount = 20)
         {
             await DeferAsync(ephemeral: true);
@@ -137,6 +137,16 @@ public partial class AtoZModule
                     }
 
                     var match = matchResult.Match;
+
+                    // 2026-08-01 이전 경기는 수집 대상에서 제외합니다(사용자 요청 — 그 이전 데이터는
+                    // 정합성 이슈가 있었던 적이 있어 신뢰 안 함, ClanConstants.MatchCollectionCutoffUtc 참고).
+                    // "확인 완료(저장 안 됨)"로 캐싱해서 다음 수집 때 이 매치를 다시 조회하지 않게 합니다 —
+                    // 날짜는 안 바뀌므로 한 번 걸러진 매치는 영원히 걸러집니다.
+                    if (match.GameCreatedAt < MatchCollectionCutoffUtc)
+                    {
+                        await _matchRepository.MarkMatchCheckedAsync(Context.Guild.Id, match.MatchId, match.QueueId, allClanSaved: false);
+                        continue;
+                    }
 
                     // 팀(team_id)별로 나눠서, 5명 전원이 본캐/부캐 포함 우리 멤버로 확인되는 팀만 저장합니다.
                     // (매치메이킹으로 섞인 랜덤 팀원까지 통계에 끼는 걸 막기 위함 — "우리끼리 5명" 게임만 수집)
