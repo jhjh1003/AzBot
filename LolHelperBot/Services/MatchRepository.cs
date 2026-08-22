@@ -533,6 +533,103 @@ public class MatchRepository
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// "부캐 소유자 충돌"(같은 경기에 본인+빌린 사람이 동시에 있어서 저장 자체가 씹힌 경우)과 달리,
+    /// 저장은 정상적으로 됐지만 그 경기만 다른 사람이 빌려서 한 경우를 위한 기능입니다.
+    /// 이미 저장된 참가 기록(match_participations, match_contribution_v4)의 discord_user_id를
+    /// fromDiscordUserId에서 toDiscordUserId로 그대로 옮깁니다(다시 Riot API를 조회하지 않음 —
+    /// 이미 저장된 통계는 정확하고, 누구 것으로 볼지만 바뀌는 것이기 때문).
+    /// 대상 멤버가 같은 경기에 이미 자기 기록을 갖고 있으면(=진짜 부캐 충돌 케이스) 덮어쓰지 않고 실패로 반환합니다
+    /// — 그 경우엔 /atoz 부캐충돌목록·부캐충돌해결을 대신 써야 합니다.
+    /// </summary>
+    public async Task<ReassignParticipationOutcome> ReassignParticipationOwnerAsync(
+        ulong guildId,
+        string matchId,
+        ulong fromDiscordUserId,
+        ulong toDiscordUserId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction();
+
+        var selectCommand = connection.CreateCommand();
+        selectCommand.Transaction = transaction;
+        selectCommand.CommandText = """
+            SELECT champion_name, team_position, kills, deaths, assists, win
+            FROM match_participations
+            WHERE guild_id = $guildId AND match_id = $matchId AND discord_user_id = $fromId;
+            """;
+        selectCommand.Parameters.AddWithValue("$guildId", guildId.ToString());
+        selectCommand.Parameters.AddWithValue("$matchId", matchId);
+        selectCommand.Parameters.AddWithValue("$fromId", fromDiscordUserId.ToString());
+
+        string championName;
+        string teamPosition;
+        int kills, deaths, assists;
+        bool win;
+        await using (var reader = await selectCommand.ExecuteReaderAsync(cancellationToken))
+        {
+            if (!await reader.ReadAsync(cancellationToken))
+            {
+                return new ReassignParticipationOutcome(ReassignParticipationStatus.SourceNotFound);
+            }
+
+            championName = reader.GetString(0);
+            teamPosition = reader.GetString(1);
+            kills = reader.GetInt32(2);
+            deaths = reader.GetInt32(3);
+            assists = reader.GetInt32(4);
+            win = reader.GetInt32(5) != 0;
+        }
+
+        var checkCommand = connection.CreateCommand();
+        checkCommand.Transaction = transaction;
+        checkCommand.CommandText = """
+            SELECT COUNT(*) FROM match_participations
+            WHERE guild_id = $guildId AND match_id = $matchId AND discord_user_id = $toId;
+            """;
+        checkCommand.Parameters.AddWithValue("$guildId", guildId.ToString());
+        checkCommand.Parameters.AddWithValue("$matchId", matchId);
+        checkCommand.Parameters.AddWithValue("$toId", toDiscordUserId.ToString());
+        var existingCount = (long)(await checkCommand.ExecuteScalarAsync(cancellationToken))!;
+        if (existingCount > 0)
+        {
+            return new ReassignParticipationOutcome(ReassignParticipationStatus.TargetAlreadyHasRecord);
+        }
+
+        var updateCommand = connection.CreateCommand();
+        updateCommand.Transaction = transaction;
+        updateCommand.CommandText = """
+            UPDATE match_participations SET discord_user_id = $toId
+            WHERE guild_id = $guildId AND match_id = $matchId AND discord_user_id = $fromId;
+            """;
+        updateCommand.Parameters.AddWithValue("$guildId", guildId.ToString());
+        updateCommand.Parameters.AddWithValue("$matchId", matchId);
+        updateCommand.Parameters.AddWithValue("$fromId", fromDiscordUserId.ToString());
+        updateCommand.Parameters.AddWithValue("$toId", toDiscordUserId.ToString());
+        await updateCommand.ExecuteNonQueryAsync(cancellationToken);
+
+        // 기여도 v4 점수도 같은 매치에 계산돼 있으면(match_contribution_v4) 같이 옮겨서
+        // /명예의전당·/아재전적이 재배정 후 새 소유자 기준으로 보이게 합니다. 없으면 그냥 0행 갱신.
+        var updateV4Command = connection.CreateCommand();
+        updateV4Command.Transaction = transaction;
+        updateV4Command.CommandText = """
+            UPDATE match_contribution_v4 SET discord_user_id = $toId
+            WHERE guild_id = $guildId AND match_id = $matchId AND discord_user_id = $fromId;
+            """;
+        updateV4Command.Parameters.AddWithValue("$guildId", guildId.ToString());
+        updateV4Command.Parameters.AddWithValue("$matchId", matchId);
+        updateV4Command.Parameters.AddWithValue("$fromId", fromDiscordUserId.ToString());
+        updateV4Command.Parameters.AddWithValue("$toId", toDiscordUserId.ToString());
+        await updateV4Command.ExecuteNonQueryAsync(cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return new ReassignParticipationOutcome(
+            ReassignParticipationStatus.Success, championName, teamPosition, kills, deaths, assists, win);
+    }
+
     public async Task SaveParticipationAsync(
         ulong guildId,
         string matchId,
@@ -1448,6 +1545,24 @@ public record OwnerConflictRow(
     string ChampionName,
     string TeamPosition,
     ulong DefaultOwnerDiscordUserId);
+
+/// <summary>ReassignParticipationOwnerAsync의 결과 상태. "부캐 충돌"과 겹치지 않게 대상 멤버가 이미
+/// 같은 경기 기록을 갖고 있으면 TargetAlreadyHasRecord로 막습니다.</summary>
+public enum ReassignParticipationStatus
+{
+    Success,
+    SourceNotFound,
+    TargetAlreadyHasRecord,
+}
+
+public record ReassignParticipationOutcome(
+    ReassignParticipationStatus Status,
+    string? ChampionName = null,
+    string? TeamPosition = null,
+    int Kills = 0,
+    int Deaths = 0,
+    int Assists = 0,
+    bool Win = false);
 
 public record MemberWinRateRow(ulong DiscordUserId, int Games, int Wins, int Kills, int Deaths, int Assists);
 

@@ -7,6 +7,13 @@ AfterUpgrade.md)을 참고하세요 — 요약하면 **디스코드 봇은 웹�
 "항상 켜져 있는 프로세스"를 돌려주는 곳(VM, VPS)이 필요**하고, Oracle Cloud Always Free 같은
 평생 무료 VM을 추천합니다.
 
+**2026-08-22 업데이트**: 처음엔 VM 위에서 직접 `docker build`(= `dotnet publish`)를 돌리는
+방식으로 썼는데, Oracle Always Free의 `E2.1.Micro`(1GB RAM)에서 빌드 도중 메모리 부족으로
+죽는 문제가 있었습니다. **원인은 "이 봇을 실행할 사양"이 부족한 게 아니라 "이 봇을 빌드할
+사양"이 부족했던 것**입니다 — 봇 자체는 실행할 때 100~200MB면 충분합니다. 그래서 지금은 **빌드는
+GitHub Actions가 하고, VM은 완성된 이미지를 내려받기(`docker pull`)만** 하도록 바꿨습니다. VM에서
+`docker build`를 아예 안 하니 1GB RAM VM으로도 충분합니다.
+
 ## 1. 로컬에서 Docker로 먼저 테스트 (배포 전 필수)
 
 Docker Desktop이 설치돼 있다면, 저장소 루트에서:
@@ -68,71 +75,108 @@ docker run -d \
 빼둠). 실행할 때마다 `-e`로 넣거나, `.env` 파일 + `docker run --env-file .env`를 씁니다. `.env`
 파일 자체는 `.gitignore`/`.dockerignore`에 이미 걸려 있어서 커밋되지 않습니다.
 
-## 4. 클라우드 VM에 올리기 — Oracle Cloud Always Free, 스텝 바이 스텝
+## 4. GitHub Actions로 이미지 자동 빌드 (VM에서 빌드 안 하기)
 
-### 4-1. Oracle Cloud 계정 만들기
+`.github/workflows/docker-publish.yml`이 이미 저장소에 있습니다. `main` 브랜치에
+`LolHelperBot/` 또는 `Dockerfile`이 바뀐 커밋을 push하면(또는 GitHub의 Actions 탭에서 수동
+실행하면) **GitHub의 서버(러너)가 대신 `docker build`를 돌려서**, 완성된 이미지를
+`ghcr.io/jhjh1003/azbot`(GHCR, GitHub Container Registry)에 올려줍니다. 별도 계정 가입이나
+결제 정보 입력이 필요 없습니다 — 이미 갖고 있는 GitHub 계정 그대로 씁니다.
+
+### 4-1. 처음 한 번: 워크플로 동작 확인
+
+1. 지금 이 변경사항(전적재배정 기능 + 이 워크플로 파일)을 `main`에 push합니다.
+2. GitHub 저장소 페이지 → **Actions** 탭 → "Docker 이미지 빌드 & GHCR 푸시"가 실행 중/완료로
+   뜨는지 확인합니다(3~5분 정도 걸립니다. 로컬 1GB VM보다 훨씬 빠릅니다).
+3. 초록 체크가 뜨면 성공. 저장소 페이지 오른쪽 사이드바(또는 GitHub 프로필 → **Packages**)에
+   `azbot` 패키지가 새로 생긴 게 보입니다.
+
+### 4-2. 이미지를 공개로 전환 (VM에서 로그인 없이 pull하기 위해 — 권장)
+
+기본적으로 GHCR에 올라간 이미지는 비공개(내 계정만 접근 가능)입니다. VM에서 매번 로그인하는
+걸 피하려면 공개로 바꿔두는 게 편합니다(소스 코드 자체는 이미 공개 저장소이고, 이미지 안에도
+시크릿이 안 들어가므로 공개해도 안전합니다):
+
+1. GitHub 프로필 → **Packages** → `azbot` 클릭.
+2. 오른쪽 **Package settings** → 맨 아래 **Danger Zone** → **Change visibility** → **Public**.
+
+비공개로 유지하고 싶다면 4-4에서 VM이 `docker login`하도록 PAT(Personal Access Token,
+`read:packages` 권한)를 하나 만들어서 쓰면 됩니다.
+
+## 5. 클라우드 VM에 올리기 — Oracle Cloud Always Free, 스텝 바이 스텝
+
+빌드를 VM에서 안 하게 됐으니 **Ampere(무료지만 재고가 자주 없는 shape)를 굳이 노릴 필요가
+없습니다.** 항상 바로 만들어지는 `E2.1.Micro`(AMD, 1 OCPU/1GB RAM, 상시 무료)로도 충분합니다.
+
+### 5-1. Oracle Cloud 계정 만들기
 
 1. https://www.oracle.com/cloud/free/ 접속 → "Start for free" 클릭.
 2. 이메일 인증 → 국가/이름 등 기본 정보 입력 → **결제 정보(카드) 입력**을 요구합니다. Always
    Free 리소스만 쓰면 돈이 안 빠져나가지만, 본인 확인용으로 카드 등록 자체는 필수입니다(해외
    결제 가능한 카드 필요). 이 단계에서 막히면 카드사에 "해외 승인" 여부부터 확인해보세요.
-3. 가입 완료 후 콘솔(Console) 로그인.
+3. 가입 완료 후 콘솔(Console) 로그인. (이미 계정이 있고 지난번에 VM만 실패했다면 이 단계는
+   건너뛰고 기존 VM을 그대로 써도 됩니다 — 어차피 이제 그 VM에서 빌드를 안 하므로 문제였던
+   메모리 부족은 재발하지 않습니다.)
 
-### 4-2. VM(인스턴스) 만들기
+### 5-2. VM(인스턴스) 만들기
 
 1. 콘솔 왼쪽 상단 ☰ 메뉴 → **Compute → Instances → Create Instance**.
 2. **Name**: `azbot` 등 원하는 이름.
 3. **Image and shape**:
    - Image: **Ubuntu** (최신 LTS, 예: 24.04) 선택.
-   - Shape: **"Edit"** 클릭 → **Ampere(Arm 기반)** 계열 중 `VM.Standard.A1.Flex` 선택 → OCPU
-     1개, 메모리 6GB 정도로 설정(이 봇 규모엔 넉넉함). 이게 **Always Free**로 표시되는지
-     확인하고 진행하세요(Always Free 한도 안에서만 무료입니다 — 화면에 "Always Free eligible"
-     문구가 뜹니다).
+   - Shape: **"Edit"** 클릭 → 기본으로 잡히는 **AMD 계열 `VM.Standard.E2.1.Micro`**를 그대로
+     사용(Always Free eligible로 표시됨). Ampere를 재고 문제로 못 받았어도 상관없습니다 — 이제
+     빌드를 안 하므로 1GB RAM으로 충분합니다.
 4. **Networking**: 기본값 그대로 두면 됩니다(새 VCN 자동 생성, Public IP 자동 할당). 별도로
    포트를 열 필요는 없습니다 — 이 봇은 외부에서 들어오는 연결을 받는 서버가 아니라 디스코드
    쪽으로 "나가는" 연결만 만들기 때문입니다.
 5. **Add SSH keys**: "Generate a key pair for me" 선택 → **Private Key 다운로드 버튼을 꼭
-   눌러서 저장**(다시 못 받습니다). 파일명 예: `ssh-key-2026-08-21.key`.
+   눌러서 저장**(다시 못 받습니다). 파일명 예: `ssh-key-2026-08-22.key`.
 6. **Create** 클릭 → 1~2분 기다리면 인스턴스가 "RUNNING" 상태가 됩니다.
 7. 인스턴스 상세 페이지에서 **Public IP Address**를 확인해서 메모해두세요(예: `123.45.67.89`).
 
-### 4-3. SSH로 VM에 접속하기 (Windows)
+### 5-3. SSH로 VM에 접속하기 (Windows)
 
 Windows 11은 OpenSSH 클라이언트가 기본 내장돼 있어서 PowerShell에서 바로 됩니다. 다운받은
 개인키 파일이 있는 폴더에서:
 
 ```powershell
 # 개인키 권한을 너무 열어두면 ssh가 거부합니다 — 본인만 읽을 수 있게 제한
-icacls .\ssh-key-2026-08-21.key /inheritance:r
-icacls .\ssh-key-2026-08-21.key /grant:r "$($env:USERNAME):(R)"
+icacls .\ssh-key-2026-08-22.key /inheritance:r
+icacls .\ssh-key-2026-08-22.key /grant:r "$($env:USERNAME):(R)"
 
-ssh -i .\ssh-key-2026-08-21.key ubuntu@123.45.67.89
+ssh -i .\ssh-key-2026-08-22.key ubuntu@123.45.67.89
 ```
 
 (Oracle Ubuntu 이미지의 기본 사용자는 `ubuntu`입니다.) 처음 접속 시 "fingerprint를 신뢰하냐"는
 질문엔 `yes`를 입력합니다. 접속되면 VM의 셸이 뜹니다 — 이제부터 아래 명령은 전부 **VM
 안에서** 실행합니다.
 
-### 4-4. VM에 Docker 설치
+### 5-4. VM에 Docker 설치
 
 ```bash
 curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker $USER
 ```
 
-`usermod` 실행 후에는 `exit`로 나갔다가 4-3의 `ssh` 명령으로 다시 접속해야 그룹 변경이
+`usermod` 실행 후에는 `exit`로 나갔다가 5-3의 `ssh` 명령으로 다시 접속해야 그룹 변경이
 적용됩니다(매번 `sudo` 안 붙이려면).
 
-### 4-5. 코드 가져와서 빌드 + 실행
+### 5-5. 이미지 받아서 실행 (git clone도, docker build도 필요 없음)
+
+VM에는 소스 코드가 아예 필요 없습니다 — GitHub Actions가 이미 만들어둔 이미지를 그대로
+받습니다:
 
 ```bash
-git clone https://github.com/jhjh1003/AzBot.git
-cd AzBot
-docker build -t azbot .
+# 4-2에서 이미지를 공개로 바꿨다면 로그인 없이 바로 pull 가능
+docker pull ghcr.io/jhjh1003/azbot:latest
 ```
 
-빌드가 끝나면(레포가 작아서 몇 분 안 걸립니다), 시크릿을 담을 `.env` 파일을 VM에 직접
-만듭니다(이 파일은 절대 git에 올리지 않습니다 — VM 로컬에만 존재):
+(이미지를 비공개로 유지했다면, pull 전에 한 번만 로그인:
+`echo <PAT> | docker login ghcr.io -u jhjh1003 --password-stdin`)
+
+시크릿을 담을 `.env` 파일을 VM에 직접 만듭니다(이 파일은 절대 git에 올리지 않습니다 — VM
+로컬에만 존재):
 
 ```bash
 cat > .env <<'EOF'
@@ -148,10 +192,10 @@ docker run -d \
   --restart unless-stopped \
   -v azbot-data:/data \
   --env-file .env \
-  azbot
+  ghcr.io/jhjh1003/azbot:latest
 ```
 
-### 4-6. 확인
+### 5-6. 확인
 
 ```bash
 docker ps                 # azbot 컨테이너가 Up 상태인지
@@ -166,7 +210,7 @@ docker logs -f azbot       # [준비 완료] ... 메시지 확인 (Ctrl+C로 로
 docker run --rm -v azbot-data:/data -v ~/:/host alpine cp /host/lol-helper.db /data/lol-helper.db
 ```
 
-### 4-7. VM 재부팅돼도 자동으로 다시 뜨는지 확인 (선택)
+### 5-7. VM 재부팅돼도 자동으로 다시 뜨는지 확인 (선택)
 
 ```bash
 sudo reboot
@@ -175,43 +219,44 @@ sudo reboot
 몇 분 후 다시 SSH 접속해서 `docker ps`로 `azbot`이 다시 떠 있는지 확인합니다
 (`--restart unless-stopped` 덕분에 Docker 데몬이 뜨면 컨테이너도 자동으로 같이 뜹니다).
 
-## 5. 업데이트(재배포) — 로컬에서 고치고 VM에 반영하기
+## 6. 업데이트(재배포) — 로컬에서 고치고 VM에 반영하기
 
 로컬 흐름은 지금까지 하던 대로입니다: 코드 수정 → `dotnet run`으로 테스트 → 문제없으면
-`git push`. VM에 반영하는 건 아래 4줄이 전부입니다(볼륨은 그대로 재사용되므로 **DB는 안
-날아갑니다**):
+`git push`(→ Actions가 자동으로 새 이미지를 빌드해서 GHCR에 올려줌, 3~5분 소요). VM에
+반영하는 건 **`git pull`도 `docker build`도 없이** 이미지만 새로 받으면 끝입니다(볼륨은 그대로
+재사용되므로 **DB는 안 날아갑니다**):
 
 ```bash
-ssh -i .\ssh-key-2026-08-21.key ubuntu@123.45.67.89   # VM 접속
-cd AzBot
-git pull
-docker build -t azbot .
+ssh -i .\ssh-key-2026-08-22.key ubuntu@123.45.67.89   # VM 접속
+
+docker pull ghcr.io/jhjh1003/azbot:latest
 docker stop azbot && docker rm azbot
-docker run -d --name azbot --restart unless-stopped -v azbot-data:/data --env-file .env azbot
+docker run -d --name azbot --restart unless-stopped -v azbot-data:/data --env-file .env ghcr.io/jhjh1003/azbot:latest
 ```
 
 자주 쓸 것 같으면 VM에 아래처럼 스크립트로 저장해두고 `./redeploy.sh` 한 줄로 끝낼 수도
-있습니다:
+있습니다(단, `git push` 후 Actions 빌드가 끝날 때까지 3~5분 기다렸다가 실행해야 최신 이미지를
+받습니다 — GitHub 저장소 Actions 탭에서 초록 체크 확인):
 
 ```bash
 cat > redeploy.sh <<'EOF'
 #!/bin/bash
 set -e
-cd ~/AzBot
-git pull
-docker build -t azbot .
+docker pull ghcr.io/jhjh1003/azbot:latest
 docker stop azbot || true
 docker rm azbot || true
-docker run -d --name azbot --restart unless-stopped -v azbot-data:/data --env-file .env azbot
+docker run -d --name azbot --restart unless-stopped -v azbot-data:/data --env-file .env ghcr.io/jhjh1003/azbot:latest
 echo "재배포 완료. 로그: docker logs -f azbot"
 EOF
 chmod +x redeploy.sh
 ```
 
-## 6. 앞으로 고려할 것
+## 7. 앞으로 고려할 것
 
-- **CI로 이미지 자동 빌드**: 지금은 수동으로 `docker build`. GitHub Actions로 push할 때마다
-  이미지를 빌드해서 레지스트리에 올리는 것도 나중에 고려 가능(당장은 불필요).
 - **DB를 Postgres(Supabase 등)로 옮기기**: 지금 SQLite는 이 규모에서 충분하지만, 나중에
   백업/이중화가 필요해지면 `MatchRepository`/`MemberRepository`를 Postgres로 바꾸는 걸
   검토할 수 있습니다(지금은 필요성 낮음, AfterUpgrade.md 참고).
+- **redeploy.sh를 Actions 완료 알림에 맞춰 자동 실행**: 지금은 Actions 빌드가 끝났는지
+  VM에서 수동으로 확인 후 `./redeploy.sh`를 돌려야 합니다. VM이 주기적으로(예: cron) 새 이미지
+  태그가 있는지 확인해서 자동으로 pull+재시작하게 만들 수도 있습니다(당장은 배포 빈도가 낮아
+  불필요, 필요해지면 검토).

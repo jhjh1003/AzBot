@@ -6,6 +6,14 @@ LoL Helper Bot의 기능 추가/변경 내역을 버전별로 기록합니다.
 
 **아직 구현 안 한 아이디어/2단계 업그레이드는 여기 말고 [AfterUpgrade.md](AfterUpgrade.md)에서 관리합니다.** 이 파일은 "이미 배포된 것"만 남겨두는 곳입니다.
 
+## [0.9.0] - 2026-08-22
+
+### 추가
+
+- `/atoz 전적재배정` 추가 — "부캐 소유자 충돌"(같은 경기에 본인+빌린 사람이 동시에 있어 저장 자체가 씹히는 경우, `/atoz 부캐충돌목록`·`/atoz 부캐충돌해결`이 처리)과 달리, 저장은 정상적으로 됐지만 **그 경기만 다른 사람이 부캐를 빌려서 한 경우**를 위한 운영자 전용 명령. 매치ID + 기존멤버 + 새멤버를 주면 Riot API 재조회 없이 `match_participations`·`match_contribution_v4`의 소유자만 그대로 옮김(대상 멤버가 이미 같은 경기 기록을 갖고 있으면 진짜 부캐 충돌로 보고 거부). `MatchRepository.ReassignParticipationOwnerAsync` 추가.
+- `/atoz 아재전적` 각 경기 카드 맨 아래에 매치ID를 작게 표시 — `/atoz 전적재배정`에 바로 붙여넣을 수 있게.
+- `.github/workflows/docker-publish.yml` 추가 — `main`에 push하면 GitHub Actions가 Docker 이미지를 빌드해서 `ghcr.io/jhjh1003/azbot`에 자동으로 푸시. 오라클 Always Free VM(1GB RAM)에서 `docker build`가 메모리 부족으로 죽던 문제 해결(빌드를 VM 밖에서 하도록 변경). `DEPLOY.md`를 이 흐름에 맞춰 갱신.
+
 ## [0.8.1] - 2026-08-21
 
 ### 추가

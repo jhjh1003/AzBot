@@ -383,6 +383,74 @@ public partial class AtoZModule
                 ephemeral: true);
         }
 
+        // "부캐 충돌"(같은 경기에 본인+빌린 사람이 동시에 있어서 저장 자체가 씹힌 경우, 위 두 명령)과 달리,
+        // 저장은 정상적으로 됐지만 그 경기만 다른 사람이 계정을 빌려서 한 경우를 위한 명령입니다.
+        // 2026-08-22, 사용자 요청: "부캐충돌 말고 그 판만 빌려썼을 때 바꿀 수 있는 운영자용 기능".
+        [SlashCommand("전적재배정", "부캐를 남이 잠깐 빌려서 한 경기의 기록 소유자를 실제 플레이어로 바꿉니다 (부캐 충돌과는 다른 경우입니다).")]
+        [DefaultMemberPermissions(GuildPermission.ManageGuild)]
+        public async Task ReassignParticipationAsync(
+            [Summary("매치아이디", "기록을 옮길 매치 ID (예: KR_8348359834) — /atoz 아재전적 등에서 확인 가능")]
+        string matchId,
+            [Summary("기존멤버", "지금 이 경기 기록이 잘못 붙어 있는 멤버(빌려준 부캐의 등록 주인)")]
+        IUser fromMember,
+            [Summary("새멤버", "실제로 그 계정을 빌려서 이 경기를 플레이한 멤버")]
+        IUser toMember)
+        {
+            await DeferAsync(ephemeral: true);
+
+            if (Context.Guild is null)
+            {
+                await FollowupAsync("이 명령은 AtoZ Discord 서버에서만 사용할 수 있습니다.", ephemeral: true);
+                return;
+            }
+
+            if (!Context.CanManageMembers())
+            {
+                await FollowupAsync(
+                    "❌ 이 명령은 서버 소유자와 서버 관리 권한이 있는 운영자만 사용할 수 있습니다.",
+                    ephemeral: true);
+                return;
+            }
+
+            if (fromMember.Id == toMember.Id)
+            {
+                await FollowupAsync("❌ 기존멤버와 새멤버가 같습니다.", ephemeral: true);
+                return;
+            }
+
+            var outcome = await _matchRepository.ReassignParticipationOwnerAsync(
+                Context.Guild.Id, matchId, fromMember.Id, toMember.Id);
+
+            var fromName = fromMember is Discord.WebSocket.SocketGuildUser fromGuildUser ? fromGuildUser.DisplayName : fromMember.Username;
+            var toName = toMember is Discord.WebSocket.SocketGuildUser toGuildUser ? toGuildUser.DisplayName : toMember.Username;
+
+            if (outcome.Status == ReassignParticipationStatus.SourceNotFound)
+            {
+                await FollowupAsync(
+                    $"❌ `{matchId}`에 **{EscapeMarkdown(fromName)}** 이름으로 저장된 기록을 찾지 못했습니다. " +
+                        "매치 ID와 기존멤버를 다시 확인해 주세요.",
+                    ephemeral: true);
+                return;
+            }
+
+            if (outcome.Status == ReassignParticipationStatus.TargetAlreadyHasRecord)
+            {
+                await FollowupAsync(
+                    $"❌ **{EscapeMarkdown(toName)}**은(는) 이미 `{matchId}` 경기 기록이 있습니다 " +
+                        "(같은 경기에 본인 계정 + 빌린 부캐가 동시에 있었던 '부캐 충돌'로 보입니다). " +
+                        "이 경우는 `/atoz 부캐충돌목록`·`/atoz 부캐충돌해결`을 사용해 주세요.",
+                    ephemeral: true);
+                return;
+            }
+
+            var resultMark = outcome.Win ? "승" : "패";
+            await FollowupAsync(
+                $"✅ `{matchId}` {GetPositionIcon(outcome.TeamPosition!)} {GetKoreanPosition(outcome.TeamPosition!)} " +
+                    $"**{EscapeMarkdown(outcome.ChampionName!)}** {outcome.Kills}/{outcome.Deaths}/{outcome.Assists} ({resultMark}) 기록을 " +
+                    $"**{EscapeMarkdown(fromName)}** → **{EscapeMarkdown(toName)}**로 재배정했습니다.",
+                ephemeral: true);
+        }
+
         /// <summary>
         /// Riot API는 한 번에 최대 100경기까지만 주기 때문에, totalWanted가 100을 넘으면 start를 옮겨가며 여러 번 호출합니다.
         /// 오래전에 등록된 클랜원이 있는 매치는 "가장 최근 N경기"에 안 들어갈 수 있어서, 깊게 훑어야 할 때(딥 백필) 필요합니다.
@@ -1447,9 +1515,11 @@ public partial class AtoZModule
                             $"{p.Kills}/{p.Deaths}/{p.Assists} — {EscapeMarkdown(name)}{rankMark}";
                     });
 
+                // 매치ID를 작게라도 같이 보여줘서, 부캐를 빌려쓴 걸 발견했을 때 바로
+                // /atoz 전적재배정 매치아이디:로 붙여넣을 수 있게 합니다.
                 embedBuilder.AddField(
                     $"{winMark} {playedAt:MM/dd HH:mm} · {minutes}분 · {match.Participants.Count}명 참여",
-                    string.Join("\n", lines));
+                    string.Join("\n", lines) + $"\n`{match.MatchId}`");
             }
 
             await FollowupAsync(embed: embedBuilder.Build());

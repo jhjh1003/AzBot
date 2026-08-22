@@ -1,0 +1,53 @@
+# [AI-GENERATED] 이 파일은 AI(Claude)가 생성했습니다.
+# Source: Claude (Claude Code / Cowork)
+# Date: 2026-08-22
+# Reviewer: (박정훈)
+# Review: 오라클 무료 VM(1GB RAM)에서 `docker build`(dotnet publish)가 메모리 부족으로 죽던 문제 해결용.
+# 빌드는 GitHub Actions 러너(넉넉한 사양, 무료 티어)가 대신 하고, 완성된 이미지만 GHCR(ghcr.io)에 올립니다.
+# VM은 이제 이 이미지를 docker pull만 하면 됩니다 — 빌드를 아예 안 함. 처음 설정 방법은 DEPLOY.md 참고.
+
+name: Docker 이미지 빌드 & GHCR 푸시
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "LolHelperBot/**"
+      - "Dockerfile"
+      - ".github/workflows/docker-publish.yml"
+  workflow_dispatch: {} # Actions 탭에서 수동 실행도 가능
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/azbot
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # GHCR에 푸시하려면 필요
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Docker Buildx 설정
+        uses: docker/setup-buildx-action@v3
+
+      - name: GHCR 로그인
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }} # 저장소 기본 제공 토큰 — 별도 설정 불필요
+
+      - name: 빌드 + 푸시
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
