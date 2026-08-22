@@ -8,6 +8,7 @@
 
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using Discord;
 using Discord.Interactions;
 using LolHelperBot.Services;
@@ -34,6 +35,14 @@ public partial class AtoZModule
         {
             Timeout = TimeSpan.FromSeconds(30),
         };
+
+        // /atoz 전적수집 중복 실행 방지용 가드. InteractionModuleBase는 인터랙션마다 인스턴스가 새로
+        // 생성되므로 인스턴스 필드로는 상태를 못 지키고, static + Interlocked로 프로세스 전체에서
+        // "지금 수집 중인가"를 관리합니다(0=유휴, 1=진행 중). 다른 조회 명령(/티어픽 등)은 짧은 SQLite
+        // 쿼리 하나씩이라 전적수집과 동시에 실행돼도 안전합니다(Microsoft.Data.Sqlite 기본 busy timeout
+        // 30초 안에서 알아서 재시도됨) — 진짜 위험한 건 /atoz 전적수집을 실수로 두 번 동시에 돌리는
+        // 경우(Riot API 요청 두 배, checked_matches 캐시 경합)라 이것만 막습니다.
+        private static int _isCollecting;
 
         private readonly RiotApiClient _riotApiClient;
         private readonly MemberRepository _memberRepository;
@@ -85,7 +94,29 @@ public partial class AtoZModule
 
             recentCount = Math.Clamp(recentCount, 1, 300);
 
-            var members = await _memberRepository.GetAllByGuildAsync(Context.Guild.Id);
+            // 이미 다른 /atoz 전적수집이 진행 중이면 겹쳐 돌리지 않고 바로 안내합니다(Riot API 요청이
+            // 두 배로 나가고 checked_matches 캐시가 경합할 수 있어서).
+            if (Interlocked.CompareExchange(ref _isCollecting, 1, 0) != 0)
+            {
+                await FollowupAsync(
+                    "⏳ 이미 다른 `/atoz 전적수집`이 진행 중입니다. 끝날 때까지 기다렸다가 다시 시도해 주세요.",
+                    ephemeral: true);
+                return;
+            }
+
+            try
+            {
+                await CollectMatchesCoreAsync(recentCount);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _isCollecting, 0);
+            }
+        }
+
+        private async Task CollectMatchesCoreAsync(int recentCount)
+        {
+            var members = await _memberRepository.GetAllByGuildAsync(Context.Guild!.Id);
             if (members.Count == 0)
             {
                 await FollowupAsync("등록된 AtoZ 멤버가 없습니다. `/atoz 멤버등록`을 먼저 사용해 주세요.", ephemeral: true);
