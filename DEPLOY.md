@@ -4,15 +4,22 @@
 해서 클라우드 VM 같은 곳에서 24시간 돌리는 방법**을 정리합니다. 왜 Netlify/Supabase 같은
 서버리스 서비스가 안 맞고 어떤 곳이 맞는지는 ARCHITECTURE.md보다는 이 문서보다 대화 맥락(또는
 AfterUpgrade.md)을 참고하세요 — 요약하면 **디스코드 봇은 웹소켓을 24시간 붙잡고 있어야 해서
-"항상 켜져 있는 프로세스"를 돌려주는 곳(VM, VPS)이 필요**하고, Oracle Cloud Always Free 같은
-평생 무료 VM을 추천합니다.
+"항상 켜져 있는 프로세스"를 돌려주는 곳(VM, VPS)이 필요**합니다. VM 제공자는 **Vultr(서울
+리전, 월 소액 유료)**를 씁니다 — 아래 2026-08-22 업데이트 참고.
 
-**2026-08-22 업데이트**: 처음엔 VM 위에서 직접 `docker build`(= `dotnet publish`)를 돌리는
-방식으로 썼는데, Oracle Always Free의 `E2.1.Micro`(1GB RAM)에서 빌드 도중 메모리 부족으로
-죽는 문제가 있었습니다. **원인은 "이 봇을 실행할 사양"이 부족한 게 아니라 "이 봇을 빌드할
-사양"이 부족했던 것**입니다 — 봇 자체는 실행할 때 100~200MB면 충분합니다. 그래서 지금은 **빌드는
-GitHub Actions가 하고, VM은 완성된 이미지를 내려받기(`docker pull`)만** 하도록 바꿨습니다. VM에서
-`docker build`를 아예 안 하니 1GB RAM VM으로도 충분합니다.
+**2026-08-22 업데이트 (1) — 빌드는 VM 밖에서**: 처음엔 VM 위에서 직접 `docker build`
+(= `dotnet publish`)를 돌리는 방식으로 썼는데, Oracle Always Free의 `E2.1.Micro`(1GB RAM)에서
+빌드 도중 메모리 부족으로 죽는 문제가 있었습니다. **원인은 "이 봇을 실행할 사양"이 부족한 게
+아니라 "이 봇을 빌드할 사양"이 부족했던 것**입니다 — 봇 자체는 실행할 때 100~200MB면 충분합니다.
+그래서 지금은 **빌드는 GitHub Actions가 하고, VM은 완성된 이미지를 내려받기(`docker pull`)만**
+하도록 바꿨습니다. VM에서 `docker build`를 아예 안 하니 1GB RAM VM으로도 충분합니다.
+
+**2026-08-22 업데이트 (2) — Oracle Cloud Always Free 포기**: 위 문제를 고치고 VM을 다시
+만들려던 차에, **Oracle 계정 자체가 며칠 안 썼다고 예고 없이 정지**됐습니다. 무료 티어 계정을
+비활성/의심 계정으로 판단해 통보 없이 정지시키는 사례가 흔하고, 무료 계정은 이의 신청도 잘 안
+받아줘서 복구가 사실상 어렵습니다. 이 봇은 원래 자원을 거의 안 쓰므로(디스코드 웹소켓 하나 +
+SQLite), 이런 리스크를 계속 감수하느니 **월 소액(약 6천~8천원)짜리 VPS로 전환**하기로 했습니다
+— 아래는 **Vultr(서울 리전)** 기준입니다.
 
 ## 1. 로컬에서 Docker로 먼저 테스트 (배포 전 필수)
 
@@ -100,69 +107,73 @@ docker run -d \
 1. GitHub 프로필 → **Packages** → `azbot` 클릭.
 2. 오른쪽 **Package settings** → 맨 아래 **Danger Zone** → **Change visibility** → **Public**.
 
-비공개로 유지하고 싶다면 4-4에서 VM이 `docker login`하도록 PAT(Personal Access Token,
+비공개로 유지하고 싶다면 5-6에서 VM이 `docker login`하도록 PAT(Personal Access Token,
 `read:packages` 권한)를 하나 만들어서 쓰면 됩니다.
 
-## 5. 클라우드 VM에 올리기 — Oracle Cloud Always Free, 스텝 바이 스텝
+## 5. 클라우드 VM에 올리기 — Vultr(서울 리전), 스텝 바이 스텝
 
-빌드를 VM에서 안 하게 됐으니 **Ampere(무료지만 재고가 자주 없는 shape)를 굳이 노릴 필요가
-없습니다.** 항상 바로 만들어지는 `E2.1.Micro`(AMD, 1 OCPU/1GB RAM, 상시 무료)로도 충분합니다.
+빌드를 VM에서 안 하게 됐으니 애초에 사양은 크게 안 봐도 됩니다 — 그냥 **가장 저렴한 플랜
+(1GB RAM 안팎)**이면 충분합니다. 서울 리전을 쓰면 Riot KR API·디스코드 응답 지연도 가장
+낮습니다.
 
-### 5-1. Oracle Cloud 계정 만들기
+### 5-1. (로컬) SSH 키 만들기
 
-1. https://www.oracle.com/cloud/free/ 접속 → "Start for free" 클릭.
-2. 이메일 인증 → 국가/이름 등 기본 정보 입력 → **결제 정보(카드) 입력**을 요구합니다. Always
-   Free 리소스만 쓰면 돈이 안 빠져나가지만, 본인 확인용으로 카드 등록 자체는 필수입니다(해외
-   결제 가능한 카드 필요). 이 단계에서 막히면 카드사에 "해외 승인" 여부부터 확인해보세요.
-3. 가입 완료 후 콘솔(Console) 로그인. (이미 계정이 있고 지난번에 VM만 실패했다면 이 단계는
-   건너뛰고 기존 VM을 그대로 써도 됩니다 — 어차피 이제 그 VM에서 빌드를 안 하므로 문제였던
-   메모리 부족은 재발하지 않습니다.)
-
-### 5-2. VM(인스턴스) 만들기
-
-1. 콘솔 왼쪽 상단 ☰ 메뉴 → **Compute → Instances → Create Instance**.
-2. **Name**: `azbot` 등 원하는 이름.
-3. **Image and shape**:
-   - Image: **Ubuntu** (최신 LTS, 예: 24.04) 선택.
-   - Shape: **"Edit"** 클릭 → 기본으로 잡히는 **AMD 계열 `VM.Standard.E2.1.Micro`**를 그대로
-     사용(Always Free eligible로 표시됨). Ampere를 재고 문제로 못 받았어도 상관없습니다 — 이제
-     빌드를 안 하므로 1GB RAM으로 충분합니다.
-4. **Networking**: 기본값 그대로 두면 됩니다(새 VCN 자동 생성, Public IP 자동 할당). 별도로
-   포트를 열 필요는 없습니다 — 이 봇은 외부에서 들어오는 연결을 받는 서버가 아니라 디스코드
-   쪽으로 "나가는" 연결만 만들기 때문입니다.
-5. **Add SSH keys**: "Generate a key pair for me" 선택 → **Private Key 다운로드 버튼을 꼭
-   눌러서 저장**(다시 못 받습니다). 파일명 예: `ssh-key-2026-08-22.key`.
-6. **Create** 클릭 → 1~2분 기다리면 인스턴스가 "RUNNING" 상태가 됩니다.
-7. 인스턴스 상세 페이지에서 **Public IP Address**를 확인해서 메모해두세요(예: `123.45.67.89`).
-
-### 5-3. SSH로 VM에 접속하기 (Windows)
-
-Windows 11은 OpenSSH 클라이언트가 기본 내장돼 있어서 PowerShell에서 바로 됩니다. 다운받은
-개인키 파일이 있는 폴더에서:
+Vultr는 Oracle처럼 개인키를 만들어서 주는 게 아니라, **내가 만든 공개키를 등록**하는 방식입니다.
+PowerShell에서(Windows 11은 OpenSSH가 기본 내장돼 있어 별도 설치 불필요):
 
 ```powershell
-# 개인키 권한을 너무 열어두면 ssh가 거부합니다 — 본인만 읽을 수 있게 제한
-icacls .\ssh-key-2026-08-22.key /inheritance:r
-icacls .\ssh-key-2026-08-22.key /grant:r "$($env:USERNAME):(R)"
-
-ssh -i .\ssh-key-2026-08-22.key ubuntu@123.45.67.89
+ssh-keygen -t ed25519 -f "$HOME\.ssh\azbot_vultr" -C "azbot"
 ```
 
-(Oracle Ubuntu 이미지의 기본 사용자는 `ubuntu`입니다.) 처음 접속 시 "fingerprint를 신뢰하냐"는
-질문엔 `yes`를 입력합니다. 접속되면 VM의 셸이 뜹니다 — 이제부터 아래 명령은 전부 **VM
-안에서** 실행합니다.
+암호(passphrase)는 그냥 Enter로 비워도 됩니다(입력해도 되지만, 이후 자동화 스크립트에서는
+매번 물어봐서 번거로움). 완료되면 `azbot_vultr`(개인키)·`azbot_vultr.pub`(공개키) 두 파일이
+`~/.ssh`에 생깁니다. 공개키 내용을 화면에 출력해서 복사해두세요(다음 단계에서 붙여넣습니다):
 
-### 5-4. VM에 Docker 설치
+```powershell
+Get-Content "$HOME\.ssh\azbot_vultr.pub"
+```
+
+### 5-2. Vultr 계정 만들기 + 결제수단 등록
+
+1. https://www.vultr.com 접속 → 가입(이메일 또는 Google/GitHub 계정으로 가능).
+2. 계정 생성 후 **Billing → Payment Methods**에서 카드 또는 PayPal 등록(사용한 만큼만
+   과금되는 종량제라, 인스턴스를 안 지우면 매달 플랜 금액이 청구됩니다).
+
+### 5-3. VM(인스턴스) 만들기
+
+1. 대시보드 우측 상단 **+ Deploy** → **Deploy New Server**.
+2. **Choose Server**: **Cloud Compute – Shared CPU** (가장 저렴한 일반형).
+3. **CPU & Storage Technology**: 기본값(Regular Performance / Intel or AMD) 그대로.
+4. **Server Location**: **Seoul, South Korea**.
+5. **Server Image**: **Ubuntu 24.04 LTS x64**.
+6. **Server Size**: 1GB RAM 플랜(가장 저렴한 축, 월 약 6천~8천원대) 선택 — 이 봇은 이 정도면
+   넉넉합니다.
+7. **SSH Keys** → **Add New** → 5-1에서 복사해둔 공개키(`azbot_vultr.pub` 내용)를 붙여넣고
+   저장 → 방금 추가한 키를 체크.
+8. **Server Hostname & Label**: `azbot` 등 원하는 이름.
+9. **Deploy Now** 클릭 → 1~2분 기다리면 상태가 "Running"으로 바뀝니다.
+10. 인스턴스 목록에서 방금 만든 서버를 클릭해 **IP Address**를 확인해서 메모해두세요(예:
+    `123.45.67.89`).
+
+### 5-4. SSH로 VM에 접속하기 (Windows)
+
+```powershell
+ssh -i "$HOME\.ssh\azbot_vultr" root@123.45.67.89
+```
+
+(Vultr Ubuntu 이미지의 기본 사용자는 `root`입니다 — Oracle의 `ubuntu`와 다릅니다.) 처음 접속 시
+"fingerprint를 신뢰하냐"는 질문엔 `yes`를 입력합니다. 접속되면 VM의 셸이 뜹니다 — 이제부터
+아래 명령은 전부 **VM 안에서** 실행합니다.
+
+### 5-5. VM에 Docker 설치
+
+이미 `root`로 접속했으므로 `sudo`나 `usermod` 단계 없이 바로 설치됩니다:
 
 ```bash
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker $USER
+curl -fsSL https://get.docker.com | sh
 ```
 
-`usermod` 실행 후에는 `exit`로 나갔다가 5-3의 `ssh` 명령으로 다시 접속해야 그룹 변경이
-적용됩니다(매번 `sudo` 안 붙이려면).
-
-### 5-5. 이미지 받아서 실행 (git clone도, docker build도 필요 없음)
+### 5-6. 이미지 받아서 실행 (git clone도, docker build도 필요 없음)
 
 VM에는 소스 코드가 아예 필요 없습니다 — GitHub Actions가 이미 만들어둔 이미지를 그대로
 받습니다:
@@ -195,7 +206,7 @@ docker run -d \
   ghcr.io/jhjh1003/azbot:latest
 ```
 
-### 5-6. 확인
+### 5-7. 확인
 
 ```bash
 docker ps                 # azbot 컨테이너가 Up 상태인지
@@ -204,13 +215,13 @@ docker logs -f azbot       # [준비 완료] ... 메시지 확인 (Ctrl+C로 로
 
 디스코드에서 `/ping`을 쳐서 응답 오면 성공입니다. 기존에 로컬에서 쌓아둔 DB
 (`%LOCALAPPDATA%\LolHelperBot\lol-helper.db`)를 이어서 쓰고 싶다면, VM으로 파일을 복사한
-뒤(`scp -i 키파일 lol-helper.db ubuntu@IP:~/`) 아래처럼 볼륨 안에 넣어줍니다:
+뒤(`scp -i "$HOME\.ssh\azbot_vultr" lol-helper.db root@IP:~/`) 아래처럼 볼륨 안에 넣어줍니다:
 
 ```bash
 docker run --rm -v azbot-data:/data -v ~/:/host alpine cp /host/lol-helper.db /data/lol-helper.db
 ```
 
-### 5-7. VM 재부팅돼도 자동으로 다시 뜨는지 확인 (선택)
+### 5-8. VM 재부팅돼도 자동으로 다시 뜨는지 확인 (선택)
 
 ```bash
 sudo reboot
@@ -227,7 +238,7 @@ sudo reboot
 재사용되므로 **DB는 안 날아갑니다**):
 
 ```bash
-ssh -i .\ssh-key-2026-08-22.key ubuntu@123.45.67.89   # VM 접속
+ssh -i "$HOME\.ssh\azbot_vultr" root@123.45.67.89   # VM 접속
 
 docker pull ghcr.io/jhjh1003/azbot:latest
 docker stop azbot && docker rm azbot
