@@ -167,6 +167,7 @@ public class RiotApiClient
         int queueId,
         int start = 0,
         int count = 20,
+        DateTimeOffset? startTime = null,
         CancellationToken cancellationToken = default)
     {
         if (!_hasApiKey)
@@ -179,8 +180,14 @@ public class RiotApiClient
 
         try
         {
+            // startTime을 넘기면 Riot 서버가 그 이전 매치는 애초에 목록에서 빼고 응답합니다 —
+            // 클라이언트에서 받은 뒤 걸러내는 것보다 API 호출 자체를 아낄 수 있습니다
+            // (예: /atoz 전적수집의 2026-08-01 컷오프, ClanConstants.MatchCollectionCutoffUtc).
+            var startTimeQuery = startTime is not null
+                ? $"&startTime={startTime.Value.ToUnixTimeSeconds()}"
+                : "";
             var listPath = $"/lol/match/v5/matches/by-puuid/{Uri.EscapeDataString(puuid)}/ids" +
-                $"?queue={queueId}&start={start}&count={count}";
+                $"?queue={queueId}&start={start}&count={count}{startTimeQuery}";
             using var listResponse = await _accountHttpClient.GetAsync(listPath, cancellationToken);
             if (!listResponse.IsSuccessStatusCode)
             {

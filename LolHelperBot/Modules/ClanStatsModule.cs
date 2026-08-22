@@ -117,7 +117,7 @@ public partial class AtoZModule
 
             foreach (var account in accountsToScan)
             {
-                var (idsSuccess, matchIds, idsErrorMessage) = await GetAllMatchIdsAsync(account.Puuid, recentCount);
+                var (idsSuccess, matchIds, idsErrorMessage) = await GetAllMatchIdsAsync(account.Puuid, recentCount, MatchCollectionCutoffUtc);
                 if (!idsSuccess)
                 {
                     errors.Add($"{account.Label}: {idsErrorMessage}");
@@ -464,10 +464,13 @@ public partial class AtoZModule
         /// <summary>
         /// Riot API는 한 번에 최대 100경기까지만 주기 때문에, totalWanted가 100을 넘으면 start를 옮겨가며 여러 번 호출합니다.
         /// 오래전에 등록된 클랜원이 있는 매치는 "가장 최근 N경기"에 안 들어갈 수 있어서, 깊게 훑어야 할 때(딥 백필) 필요합니다.
+        /// startTime을 주면 그 이전 매치는 Riot 서버가 애초에 목록에서 빼고 응답하므로(예: 2026-08-01
+        /// 컷오프), totalWanted를 크게 잡아도 오래된 경기의 상세 조회(API 호출)를 낭비하지 않습니다.
         /// </summary>
         private async Task<(bool IsSuccess, List<string> MatchIds, string? ErrorMessage)> GetAllMatchIdsAsync(
             string puuid,
-            int totalWanted)
+            int totalWanted,
+            DateTimeOffset? startTime = null)
         {
             var all = new List<string>();
             var start = 0;
@@ -475,7 +478,7 @@ public partial class AtoZModule
             while (all.Count < totalWanted)
             {
                 var pageSize = Math.Min(100, totalWanted - all.Count);
-                var idsResult = await _riotApiClient.GetMatchIdsAsync(puuid, FlexQueueId, start: start, count: pageSize);
+                var idsResult = await _riotApiClient.GetMatchIdsAsync(puuid, FlexQueueId, start: start, count: pageSize, startTime: startTime);
                 await Task.Delay(RiotApiDelay);
 
                 if (!idsResult.IsSuccess || idsResult.MatchIds is null)
