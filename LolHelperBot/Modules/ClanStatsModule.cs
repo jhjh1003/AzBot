@@ -1119,7 +1119,7 @@ public partial class AtoZModule
             await FollowupAsync(embed: embed);
         }
 
-        [SlashCommand("내전적", "우리 클랜 데이터 기준 자유 랭크 총 승률·라인별 승률·모스트/워스트 챔피언을 보여줍니다.", true)]
+        [SlashCommand("내전적", "우리 클랜 데이터 기준 자유 랭크 총 승률·최근 전적·라인별 승률·모스트/워스트 챔피언을 보여줍니다.", true)]
         public async Task ShowMyClanStatsAsync(
             [Summary("멤버", "확인할 AtoZ 멤버. 생략하면 명령을 실행한 본인")]
         IUser? member = null,
@@ -1173,6 +1173,16 @@ public partial class AtoZModule
                 Context.Guild.Id, FlexQueueId, targetMember.Id, rangeStartUtc, rangeEndUtc);
             var positionChampionRows = await _matchRepository.GetMemberChampionStatsByPositionAsync(
                 Context.Guild.Id, FlexQueueId, targetMember.Id, rangeStartUtc, rangeEndUtc);
+
+            // "최근 10경기 서머리"·"최근 전적"용 — 기간(월) 필터와 무관하게 항상 진짜 최신 10경기 기준입니다
+            // (/아재전적처럼 필터가 없는 게 자연스러움). 5인큐만 저장되므로 팀 전체가 함께 딸려와서
+            // 기여도 순위 계산이 바로 가능합니다.
+            const int RecentMatchCount = 10;
+            const int RecentMatchDisplayCount = 3;
+            var recentMatches = await _matchRepository.GetRecentMemberMatchesAsync(
+                Context.Guild.Id, FlexQueueId, targetMember.Id, RecentMatchCount);
+            var recentV4Scores = await _matchRepository.GetContributionV4ScoresAsync(
+                Context.Guild.Id, recentMatches.Select(m => m.MatchId).ToList());
 
             var totalGames = positionRows.Sum(row => row.Games);
             var totalWins = positionRows.Sum(row => row.Wins);
@@ -1234,10 +1244,88 @@ public partial class AtoZModule
                         $"{(index == 0 ? "💀" : $"{index + 1}.")} **{EscapeMarkdown(row.ChampionName)}** — {row.Games}판 {row.Wins}승 · 승률 {Math.Round(row.Wins * 100.0 / row.Games)}%"))
                 : "승률 50% 미만인 챔피언이 없습니다 👍";
 
-            var embed = new EmbedBuilder()
+            // 최근 N경기 각각의 AZ기여도 순위를 한 번씩만 계산해서(매치당 O(팀원수)) 서머리·최근 전적 둘 다에 씁니다.
+            var recentRankByMatch = recentMatches.ToDictionary(
+                m => m.MatchId,
+                m => ComputeContributionRanks(m, recentV4Scores).GetValueOrDefault(targetMember.Id, 0));
+
+            string? RecentSummaryText()
+            {
+                if (recentMatches.Count == 0)
+                {
+                    return null;
+                }
+
+                var mineByMatch = recentMatches.ToDictionary(
+                    m => m.MatchId,
+                    m => m.Participants.First(p => p.DiscordUserId == targetMember.Id));
+
+                var recentWins = mineByMatch.Values.Count(p => p.Win);
+                var recentLosses = recentMatches.Count - recentWins;
+                var recentWinRate = Math.Round(recentWins * 100.0 / recentMatches.Count);
+
+                var mostText = mineByMatch.Values
+                    .GroupBy(p => p.ChampionName)
+                    .OrderByDescending(g => g.Count())
+                    .ThenByDescending(g => g.Count(p => p.Win) * 1.0 / g.Count())
+                    .Take(3)
+                    .Select(g => $"{EscapeMarkdown(g.Key)} {g.Count()}판 {Math.Round(g.Count(p => p.Win) * 100.0 / g.Count())}%");
+
+                var ranks = recentRankByMatch.Values.Where(rank => rank > 0).ToList();
+                var avgRankText = ranks.Count > 0
+                    ? $"**{ranks.Average():F1}위**"
+                    : "정보 없음(리플 업로드로만 저장된 경기 등)";
+
+                return $"**{recentMatches.Count}판 {recentWins}승 {recentLosses}패** · 승률 **{recentWinRate:F0}%**\n" +
+                    $"모스트: {string.Join(", ", mostText)}\n" +
+                    $"평균 AZ기여도: {avgRankText}";
+            }
+
+            string? RecentMatchesText()
+            {
+                if (recentMatches.Count == 0)
+                {
+                    return null;
+                }
+
+                var lines = recentMatches
+                    .Take(RecentMatchDisplayCount)
+                    .Select(m =>
+                    {
+                        var mine = m.Participants.First(p => p.DiscordUserId == targetMember.Id);
+                        var playedAt = m.GameCreatedAt.ToOffset(TimeSpan.FromHours(9));
+                        var winMark = mine.Win ? "🔵" : "🔴";
+                        var rank = recentRankByMatch.GetValueOrDefault(m.MatchId, 0);
+                        var rankMark = rank switch { 0 => "", 1 => " 👑", 5 => " 💀", _ => $" ({rank}위)" };
+                        return $"{winMark} {playedAt:MM/dd HH:mm} · {GetPositionIcon(mine.TeamPosition)} {GetKoreanPosition(mine.TeamPosition)} " +
+                            $"**{EscapeMarkdown(mine.ChampionName)}** {mine.Kills}/{mine.Deaths}/{mine.Assists}{rankMark}";
+                    });
+
+                return string.Join("\n", lines);
+            }
+
+            var embedBuilder = new EmbedBuilder()
                 .WithTitle($"{EscapeMarkdown(displayName)}의 AtoZ 자유 랭크 전적 ({periodLabel})")
                 .WithColor(totalWins * 2 >= totalGames ? Color.Green : Color.Red)
-                .AddField("총 승률", $"**{totalGames}판 {totalWins}승** · 승률 **{totalWinRate:F0}%**")
+                .AddField("총 승률", $"**{totalGames}판 {totalWins}승** · 승률 **{totalWinRate:F0}%**");
+
+            var recentSummaryText = RecentSummaryText();
+            if (recentSummaryText is not null)
+            {
+                // "최근"은 월 필터와 무관하게 항상 진짜 최신 기준이라, 월 필터를 걸어둔 상태면 헷갈리지 않게 표시해둡니다.
+                var recentTitle = rangeStartUtc is null
+                    ? $"최근 {recentMatches.Count}경기 서머리"
+                    : $"최근 {recentMatches.Count}경기 서머리 (기간 필터와 무관, 진짜 최신 기준)";
+                embedBuilder.AddField(recentTitle, recentSummaryText);
+            }
+
+            var recentMatchesText = RecentMatchesText();
+            if (recentMatchesText is not null)
+            {
+                embedBuilder.AddField("최근 전적", recentMatchesText);
+            }
+
+            var embed = embedBuilder
                 .AddField("라인별 승률", string.Join("\n\n", positionLines))
                 .AddField($"모스트 챔피언 TOP 3 (승률 50% 이상, 최소 {MinSampleSize}판 이상 기준)", mostChampionText)
                 .AddField($"워스트 챔피언 TOP 3 (승률 50% 미만, 최소 {MinSampleSize}판 이상 기준)", worstChampionText)
@@ -1465,37 +1553,7 @@ public partial class AtoZModule
                 var minutes = Math.Max(0, match.GameDurationSeconds) / 60;
 
                 // 팀별로(5명 채워졌으면) 기여도 순위를 계산해서, 그 판 베스트(👑)/워스트(💀)를 표시합니다.
-                // v4.0.0 점수가 5명 전원 있으면 그걸 쓰고(백필된 경기), 없으면 v3(전체 게임 기준)로 폴백.
-                var rankByUserId = new Dictionary<ulong, int>();
-                foreach (var teamGroup in match.Participants.GroupBy(p => p.TeamId))
-                {
-                    var teamList = teamGroup.ToList();
-                    var v4TeamScores = teamList
-                        .Select(p => (Participant: p, Score: v4Scores.GetValueOrDefault((match.MatchId, p.DiscordUserId), double.NaN)))
-                        .ToList();
-
-                    if (v4TeamScores.All(x => !double.IsNaN(x.Score)))
-                    {
-                        var v4Ranked = v4TeamScores.OrderByDescending(x => x.Score).ToList();
-                        for (var i = 0; i < v4Ranked.Count; i++)
-                        {
-                            rankByUserId[v4Ranked[i].Participant.DiscordUserId] = i + 1;
-                        }
-
-                        continue;
-                    }
-
-                    var ranked = _contributionScoreCalculator.TryCalculate(teamList);
-                    if (ranked is null)
-                    {
-                        continue;
-                    }
-
-                    foreach (var row in ranked)
-                    {
-                        rankByUserId[row.Participant.DiscordUserId] = row.Rank;
-                    }
-                }
+                var rankByUserId = ComputeContributionRanks(match, v4Scores);
 
                 // AtoZ 5인큐 전적은 5명 전원이 같은 팀이라 승패가 판 전체에 하나뿐 — 줄마다 반복 표시하지 않고
                 // 날짜 앞에 한 번만(🔵승/🔴패) 표시합니다.
@@ -1682,6 +1740,51 @@ public partial class AtoZModule
             startMonth = int.Parse(match.Groups[1].Value);
             endMonth = match.Groups[2].Success ? int.Parse(match.Groups[2].Value) : startMonth;
             return startMonth is >= 1 and <= 12 && endMonth is >= 1 and <= 12 && startMonth <= endMonth;
+        }
+
+        /// <summary>
+        /// 매치 한 판(팀별로 5명까지)의 기여도 순위를 계산합니다. v4.0.0 점수가 팀 전원 있으면 그걸 쓰고
+        /// (백필된 경기), 없으면 v3(ContributionScoreCalculator, 전체 게임 기준)로 폴백합니다.
+        /// 둘 다 불가능한 팀(리플 업로드로만 저장된 경기 등)은 그냥 결과에서 빠집니다.
+        /// /아재전적·/내전적이 공유합니다.
+        /// </summary>
+        private Dictionary<ulong, int> ComputeContributionRanks(
+            ClanMatchRow match,
+            IReadOnlyDictionary<(string MatchId, ulong DiscordUserId), double> v4Scores)
+        {
+            var rankByUserId = new Dictionary<ulong, int>();
+
+            foreach (var teamGroup in match.Participants.GroupBy(p => p.TeamId))
+            {
+                var teamList = teamGroup.ToList();
+                var v4TeamScores = teamList
+                    .Select(p => (Participant: p, Score: v4Scores.GetValueOrDefault((match.MatchId, p.DiscordUserId), double.NaN)))
+                    .ToList();
+
+                if (v4TeamScores.All(x => !double.IsNaN(x.Score)))
+                {
+                    var v4Ranked = v4TeamScores.OrderByDescending(x => x.Score).ToList();
+                    for (var i = 0; i < v4Ranked.Count; i++)
+                    {
+                        rankByUserId[v4Ranked[i].Participant.DiscordUserId] = i + 1;
+                    }
+
+                    continue;
+                }
+
+                var ranked = _contributionScoreCalculator.TryCalculate(teamList);
+                if (ranked is null)
+                {
+                    continue;
+                }
+
+                foreach (var row in ranked)
+                {
+                    rankByUserId[row.Participant.DiscordUserId] = row.Rank;
+                }
+            }
+
+            return rankByUserId;
         }
 
         /// <summary>

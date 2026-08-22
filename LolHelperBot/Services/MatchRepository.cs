@@ -1415,6 +1415,98 @@ public class MatchRepository
     }
 
     /// <summary>
+    /// 특정 멤버가 참여한 경기를 최근 순으로 limit개 반환합니다(/내전적의 "최근 전적" 섹션용).
+    /// match_participations는 애초에 5인큐(같은 팀 5명 전원 AtoZ 멤버)만 저장하므로, 반환되는 각
+    /// ClanMatchRow.Participants에는 그 판 팀 전체(최대 5명)가 담겨 있어 기여도 순위 계산이 가능합니다.
+    /// </summary>
+    public async Task<IReadOnlyList<ClanMatchRow>> GetRecentMemberMatchesAsync(
+        ulong guildId,
+        int queueId,
+        ulong discordUserId,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        var matchIds = new List<string>();
+        var idsCommand = connection.CreateCommand();
+        idsCommand.CommandText = """
+            SELECT match_id FROM match_participations
+            WHERE guild_id = $guildId AND queue_id = $queueId AND discord_user_id = $discordUserId
+            ORDER BY game_created_at_utc DESC
+            LIMIT $limit;
+            """;
+        idsCommand.Parameters.AddWithValue("$guildId", guildId.ToString());
+        idsCommand.Parameters.AddWithValue("$queueId", queueId);
+        idsCommand.Parameters.AddWithValue("$discordUserId", discordUserId.ToString());
+        idsCommand.Parameters.AddWithValue("$limit", limit);
+
+        await using (var idsReader = await idsCommand.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await idsReader.ReadAsync(cancellationToken))
+            {
+                matchIds.Add(idsReader.GetString(0));
+            }
+        }
+
+        if (matchIds.Count == 0)
+        {
+            return [];
+        }
+
+        // 순위 계산엔 그 판 팀 전체가 필요하므로, 대상 멤버뿐 아니라 이 매치들의 모든 참가자 행을 가져옵니다.
+        var placeholders = matchIds.Select((_, index) => $"$matchId{index}").ToList();
+        var detailCommand = connection.CreateCommand();
+        detailCommand.CommandText = $"""
+            SELECT {ClanMatchParticipantColumns}
+            FROM match_participations
+            WHERE guild_id = $guildId AND queue_id = $queueId AND match_id IN ({string.Join(",", placeholders)});
+            """;
+        detailCommand.Parameters.AddWithValue("$guildId", guildId.ToString());
+        detailCommand.Parameters.AddWithValue("$queueId", queueId);
+        for (var i = 0; i < matchIds.Count; i++)
+        {
+            detailCommand.Parameters.AddWithValue($"$matchId{i}", matchIds[i]);
+        }
+
+        var participantsByMatch = new Dictionary<string, List<ClanMatchParticipantRow>>();
+        var metaByMatch = new Dictionary<string, (DateTimeOffset CreatedAt, long DurationSeconds)>();
+
+        await using (var detailReader = await detailCommand.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await detailReader.ReadAsync(cancellationToken))
+            {
+                var matchId = detailReader.GetString(0);
+                var participant = ReadClanMatchParticipantRow(detailReader);
+
+                if (!participantsByMatch.TryGetValue(matchId, out var list))
+                {
+                    list = [];
+                    participantsByMatch[matchId] = list;
+                }
+                list.Add(participant);
+
+                if (!metaByMatch.ContainsKey(matchId))
+                {
+                    metaByMatch[matchId] = (
+                        DateTimeOffset.Parse(detailReader.GetString(10)),
+                        detailReader.GetInt64(9));
+                }
+            }
+        }
+
+        return matchIds
+            .Where(participantsByMatch.ContainsKey)
+            .Select(matchId => new ClanMatchRow(
+                matchId,
+                metaByMatch[matchId].CreatedAt,
+                metaByMatch[matchId].DurationSeconds,
+                participantsByMatch[matchId]))
+            .ToList();
+    }
+
+    /// <summary>
     /// 지정한 기간(UTC, [start, end) 반개구간)에 열린 경기 중, 기여도 점수 계산에 필요한
     /// 지표(딜량/받은피해/경감/골드/시야/CC)가 전부 채워진 참가자 행만 매치별로 묶어 반환합니다
     /// (/명예의전당용). `.rofl` 업로드로만 저장된 경기처럼 이 지표가 없는 경기는 자동으로 빠집니다.
