@@ -183,6 +183,21 @@ public class MatchRepository
             );
             """;
         await v4Command.ExecuteNonQueryAsync(cancellationToken);
+
+        // 계정(puuid)별로 "/atoz 전적수집이 마지막으로 이 계정 매치 목록을 훑은 시점"을 기록해둡니다.
+        // 다음 수집 때 이 시점 이후 매치만 Riot에 물어보면 되므로(2026-08-22), 매번 전체 구간을
+        // 다시 훑는 낭비를 줄입니다. 새로 등록된 멤버/부캐는 이 테이블에 행이 없어서 자동으로
+        // "전체 구간(2026-08-01부터) 처음부터 훑기"가 됩니다 — 별도 처리 불필요.
+        var checkpointCommand = connection.CreateCommand();
+        checkpointCommand.CommandText = """
+            CREATE TABLE IF NOT EXISTS member_collection_checkpoints (
+                guild_id TEXT NOT NULL,
+                puuid TEXT NOT NULL,
+                last_collected_at_utc TEXT NOT NULL,
+                PRIMARY KEY (guild_id, puuid)
+            );
+            """;
+        await checkpointCommand.ExecuteNonQueryAsync(cancellationToken);
     }
 
     /// <summary>
@@ -352,6 +367,72 @@ public class MatchRepository
         command.CommandText = "DELETE FROM checked_matches WHERE guild_id = $guildId AND all_clan_saved = 0;";
         command.Parameters.AddWithValue("$guildId", guildId.ToString());
         return await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// 여러 puuid의 "마지막 전적수집 시점" 체크포인트를 한 번에 조회합니다(N+1 방지).
+    /// 반환 딕셔너리에 없는 puuid는 체크포인트가 없다는 뜻(한 번도 수집 안 함 = 처음부터 훑어야 함).
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, DateTimeOffset>> GetCollectionCheckpointsAsync(
+        ulong guildId,
+        IReadOnlyCollection<string> puuids,
+        CancellationToken cancellationToken = default)
+    {
+        var result = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+        if (puuids.Count == 0)
+        {
+            return result;
+        }
+
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        var placeholders = puuids.Select((_, i) => $"$p{i}").ToList();
+        var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT puuid, last_collected_at_utc FROM member_collection_checkpoints
+            WHERE guild_id = $guildId AND puuid IN ({string.Join(",", placeholders)});
+            """;
+        command.Parameters.AddWithValue("$guildId", guildId.ToString());
+        var puuidList = puuids.ToList();
+        for (var i = 0; i < puuidList.Count; i++)
+        {
+            command.Parameters.AddWithValue($"$p{i}", puuidList[i]);
+        }
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            result[reader.GetString(0)] = DateTimeOffset.Parse(reader.GetString(1));
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 한 계정의 "마지막 전적수집 시점" 체크포인트를 갱신합니다. 이 시점 이후 매치만 다음 수집에서
+    /// Riot에 물어보게 됩니다 — 호출부가 "이 구간을 빠짐없이 다 받았다"고 확신할 때만 불러야 합니다
+    /// (중간에 못 받은 매치가 있으면 영원히 누락될 수 있음, GetAllMatchIdsAsync의 Complete 참고).
+    /// </summary>
+    public async Task SetCollectionCheckpointAsync(
+        ulong guildId,
+        string puuid,
+        DateTimeOffset collectedAt,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO member_collection_checkpoints (guild_id, puuid, last_collected_at_utc)
+            VALUES ($guildId, $puuid, $collectedAt)
+            ON CONFLICT (guild_id, puuid) DO UPDATE SET last_collected_at_utc = excluded.last_collected_at_utc;
+            """;
+        command.Parameters.AddWithValue("$guildId", guildId.ToString());
+        command.Parameters.AddWithValue("$puuid", puuid);
+        command.Parameters.AddWithValue("$collectedAt", collectedAt.UtcDateTime.ToString("O"));
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     /// <summary>

@@ -142,17 +142,40 @@ public partial class AtoZModule
                 .Concat(altAccounts.Select(alt => (alt.Puuid, Label: $"{alt.GameName}#{alt.TagLine} (부캐)")))
                 .ToList();
 
+            // 계정별 "마지막 전적수집 시점" 체크포인트 — 있으면 그 시점 이후 매치만 Riot에 물어봐서
+            // 매번 전체 구간(2026-08-01~)을 다시 훑는 낭비를 줄입니다(사용자 요청, 2026-08-22).
+            // 새로 등록된 멤버/부캐는 체크포인트가 없어서 자동으로 전체 구간을 훑게 됩니다.
+            var checkpoints = await _matchRepository.GetCollectionCheckpointsAsync(
+                Context.Guild.Id, accountsToScan.Select(a => a.Puuid).ToList());
+
+            // 이번 수집이 실제로 커버한 시점 — 각 계정이 "다 받았을 때"만 이 시각으로 체크포인트를
+            // 앞당깁니다. Riot API 반영 지연을 감안해 15분 여유를 둡니다(딱 지금 끝난 경기가 아직
+            // Riot 쪽에 안 잡혀 있다가 다음 수집에서 영구히 빠지는 걸 방지).
+            var collectionStartedAt = DateTimeOffset.UtcNow.AddMinutes(-15);
+
             var newMatchCount = 0;
             var errors = new List<string>();
             var ownerCollisionWarnings = new List<string>();
 
             foreach (var account in accountsToScan)
             {
-                var (idsSuccess, matchIds, idsErrorMessage) = await GetAllMatchIdsAsync(account.Puuid, recentCount, MatchCollectionCutoffUtc);
+                var effectiveStartTime = checkpoints.TryGetValue(account.Puuid, out var checkpoint) && checkpoint > MatchCollectionCutoffUtc
+                    ? checkpoint
+                    : MatchCollectionCutoffUtc;
+
+                var (idsSuccess, matchIds, idsComplete, idsErrorMessage) = await GetAllMatchIdsAsync(account.Puuid, recentCount, effectiveStartTime);
                 if (!idsSuccess)
                 {
                     errors.Add($"{account.Label}: {idsErrorMessage}");
                     continue;
+                }
+
+                // effectiveStartTime부터 지금까지 빠짐없이 다 받았을 때만 체크포인트를 앞당깁니다 —
+                // recentCount 한도에 걸려 일부만 받았다면(딥 백필 등) 다음 수집도 같은 시점부터
+                // 다시 훑어야 놓치는 매치가 없습니다.
+                if (idsComplete)
+                {
+                    await _matchRepository.SetCollectionCheckpointAsync(Context.Guild.Id, account.Puuid, collectionStartedAt);
                 }
 
                 var newIds = await _matchRepository.FilterNewMatchIdsAsync(Context.Guild.Id, matchIds);
@@ -496,9 +519,14 @@ public partial class AtoZModule
         /// Riot API는 한 번에 최대 100경기까지만 주기 때문에, totalWanted가 100을 넘으면 start를 옮겨가며 여러 번 호출합니다.
         /// 오래전에 등록된 클랜원이 있는 매치는 "가장 최근 N경기"에 안 들어갈 수 있어서, 깊게 훑어야 할 때(딥 백필) 필요합니다.
         /// startTime을 주면 그 이전 매치는 Riot 서버가 애초에 목록에서 빼고 응답하므로(예: 2026-08-01
-        /// 컷오프), totalWanted를 크게 잡아도 오래된 경기의 상세 조회(API 호출)를 낭비하지 않습니다.
+        /// 컷오프, 또는 이 계정의 마지막 수집 시점), totalWanted를 크게 잡아도 오래된 경기의 상세
+        /// 조회(API 호출)를 낭비하지 않습니다.
+        /// 반환값의 Complete는 "그 시작점부터 지금까지 매치를 빠짐없이 다 받았는지"를 나타냅니다 —
+        /// false면 totalWanted 한도에 걸려서 더 있을 수도 있는데 못 받은 것이므로, 호출부는 이 계정의
+        /// "마지막 수집 시점" 체크포인트를 이번 실행 시각으로 앞당기면 안 됩니다(중간에 놓친 매치가
+        /// 영원히 사라질 수 있음).
         /// </summary>
-        private async Task<(bool IsSuccess, List<string> MatchIds, string? ErrorMessage)> GetAllMatchIdsAsync(
+        private async Task<(bool IsSuccess, List<string> MatchIds, bool Complete, string? ErrorMessage)> GetAllMatchIdsAsync(
             string puuid,
             int totalWanted,
             DateTimeOffset? startTime = null)
@@ -514,12 +542,12 @@ public partial class AtoZModule
 
                 if (!idsResult.IsSuccess || idsResult.MatchIds is null)
                 {
-                    return (false, all, idsResult.Message);
+                    return (false, all, false, idsResult.Message);
                 }
 
                 if (idsResult.MatchIds.Count == 0)
                 {
-                    break; // 더 이상 과거 경기가 없음
+                    return (true, all, true, null); // 더 이상 과거 경기가 없음 = 이 구간을 빠짐없이 다 받음
                 }
 
                 all.AddRange(idsResult.MatchIds);
@@ -527,11 +555,13 @@ public partial class AtoZModule
 
                 if (idsResult.MatchIds.Count < pageSize)
                 {
-                    break; // 마지막 페이지
+                    return (true, all, true, null); // 마지막 페이지(요청보다 적게 옴) = 역시 다 받음
                 }
             }
 
-            return (true, all, null);
+            // while 조건(all.Count < totalWanted)이 거짓이 돼서 빠져나옴 = totalWanted 한도에 걸린 것.
+            // 이 시작점 이후 매치가 더 있을 수도 있는데 못 받았으므로 Complete=false.
+            return (true, all, false, null);
         }
 
         [SlashCommand("전적등록후보", "기준 계정의 최근 자유 랭크 경기에서 자주 함께한 사람(아직 미등록)을 찾아 등록 후보로 보여줍니다.")]
