@@ -1088,22 +1088,33 @@ public class MatchRepository
     public async Task<IReadOnlyList<MemberWinRateRow>> GetMemberWinRatesAsync(
         ulong guildId,
         int queueId,
+        DateTimeOffset? fromUtc = null,
+        DateTimeOffset? toUtc = null,
         CancellationToken cancellationToken = default)
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
+        var dateFilter = fromUtc is not null && toUtc is not null
+            ? "AND game_created_at_utc >= $start AND game_created_at_utc < $end"
+            : "";
+
         var command = connection.CreateCommand();
-        command.CommandText = """
+        command.CommandText = $"""
             SELECT discord_user_id, COUNT(*) AS games, SUM(win) AS wins,
                 SUM(kills) AS kills, SUM(deaths) AS deaths, SUM(assists) AS assists
             FROM match_participations
-            WHERE guild_id = $guildId AND queue_id = $queueId
+            WHERE guild_id = $guildId AND queue_id = $queueId {dateFilter}
             GROUP BY discord_user_id
             ORDER BY (SUM(win) * 1.0 / COUNT(*)) DESC, games DESC;
             """;
         command.Parameters.AddWithValue("$guildId", guildId.ToString());
         command.Parameters.AddWithValue("$queueId", queueId);
+        if (fromUtc is not null && toUtc is not null)
+        {
+            command.Parameters.AddWithValue("$start", fromUtc.Value.UtcDateTime.ToString("O"));
+            command.Parameters.AddWithValue("$end", toUtc.Value.UtcDateTime.ToString("O"));
+        }
 
         var results = new List<MemberWinRateRow>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

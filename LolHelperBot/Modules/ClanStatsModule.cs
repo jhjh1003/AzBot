@@ -1150,8 +1150,10 @@ public partial class AtoZModule
             }
         }
 
-        [SlashCommand("승률순위", "등록된 AtoZ 멤버들의 자유 랭크 승률 순위를 보여줍니다.", true)]
-        public async Task ShowWinRateRankingAsync()
+        [SlashCommand("승률순위", "등록된 AtoZ 멤버들의 자유 랭크 승률 순위와 월간(이번 달 또는 지정한 연월) 순위를 보여줍니다.", true)]
+        public async Task ShowWinRateRankingAsync(
+            [Summary("연월", "월간 순위에 쓸 연월. 예: 2026-08. 생략하면 이번 달(KST 기준)")]
+        string? 연월 = null)
         {
             await DeferAsync();
 
@@ -1161,6 +1163,25 @@ public partial class AtoZModule
                 return;
             }
 
+            DateTimeOffset monthStartKst;
+            if (string.IsNullOrWhiteSpace(연월))
+            {
+                var nowKst = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(9));
+                monthStartKst = new DateTimeOffset(nowKst.Year, nowKst.Month, 1, 0, 0, 0, TimeSpan.FromHours(9));
+            }
+            else if (TryParseYearMonth(연월, out var year, out var month))
+            {
+                monthStartKst = new DateTimeOffset(year, month, 1, 0, 0, 0, TimeSpan.FromHours(9));
+            }
+            else
+            {
+                await FollowupAsync("연월 형식이 올바르지 않습니다. `2026-08`처럼 입력해 주세요.");
+                return;
+            }
+
+            var monthLabel = $"{monthStartKst.Year}년 {monthStartKst.Month}월";
+            var monthEndKst = monthStartKst.AddMonths(1);
+
             var rows = await _matchRepository.GetMemberWinRatesAsync(Context.Guild.Id, FlexQueueId);
             if (rows.Count == 0)
             {
@@ -1168,25 +1189,39 @@ public partial class AtoZModule
                 return;
             }
 
+            var nameByUserId = await GetDisplayNameLookupAsync(Context.Guild.Id);
+
+            string FormatLines(IEnumerable<MemberWinRateRow> source) => string.Join("\n", source.Select((row, index) =>
+            {
+                var displayName = nameByUserId.TryGetValue(row.DiscordUserId, out var name) ? name : "알 수 없는 멤버";
+                var winRate = Math.Round(row.Wins * 100.0 / row.Games);
+                var kda = (row.Kills + row.Assists) / (double)Math.Max(1, row.Deaths);
+                return $"{GetRankLabel(index)} **{EscapeMarkdown(displayName)}** — {row.Games}판 {row.Wins}승 · 승률 {winRate:F0}% · KDA {kda:F2}";
+            }));
+
             var sampled = rows.Where(row => row.Games >= MinSampleSize).ToList();
             if (sampled.Count == 0)
             {
                 sampled = rows.ToList();
             }
 
-            var nameByUserId = await GetDisplayNameLookupAsync(Context.Guild.Id);
-            var lines = sampled.Select((row, index) =>
+            // 월간 순위는 표본이 워낙 작을 수 있는 구간이라, 여기서도 표본 부족 시 전체로 폴백합니다
+            // (다른 월별 통계들과 동일한 규칙).
+            var monthRows = await _matchRepository.GetMemberWinRatesAsync(
+                Context.Guild.Id, FlexQueueId, monthStartKst.ToUniversalTime(), monthEndKst.ToUniversalTime());
+            var monthSampled = monthRows.Where(row => row.Games >= MinSampleSize).ToList();
+            if (monthSampled.Count == 0)
             {
-                var displayName = nameByUserId.TryGetValue(row.DiscordUserId, out var name) ? name : "알 수 없는 멤버";
-                var winRate = Math.Round(row.Wins * 100.0 / row.Games);
-                var kda = (row.Kills + row.Assists) / (double)Math.Max(1, row.Deaths);
-                return $"{GetRankLabel(index)} **{EscapeMarkdown(displayName)}** — {row.Games}판 {row.Wins}승 · 승률 {winRate:F0}% · KDA {kda:F2}";
-            });
+                monthSampled = monthRows.ToList();
+            }
 
             var embed = new EmbedBuilder()
                 .WithTitle("AtoZ 자유 랭크 승률 순위")
                 .WithColor(Color.Blue)
-                .WithDescription(string.Join("\n", lines))
+                .WithDescription(FormatLines(sampled))
+                .AddField(
+                    $"📅 {monthLabel} 승률 순위",
+                    monthSampled.Count > 0 ? FormatLines(monthSampled) : "이 달에 기록된 경기가 없습니다.")
                 .WithFooter($"운영자가 /atoz 전적수집 을 실행한 시점까지의 데이터 기준입니다. 최소 {MinSampleSize}판 이상 (표본 부족 시 전체 표시)")
                 .Build();
 
